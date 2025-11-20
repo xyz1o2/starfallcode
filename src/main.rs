@@ -25,6 +25,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create app instance
     let mut app = App::new();
+    
+    // Initialize AI client (using a placeholder API key)
+    // In a real application, you would load this from environment or config
+    app.init_ai_client("your-api-key-here".to_string());
+    
+    // Initialize project context (optional)
+    // app.init_project_context(".");
 
     // Run the application
     let res = run_app(&mut terminal, &mut app).await;
@@ -54,17 +61,9 @@ async fn run_app<B: ratatui::backend::Backend>(
 
         if crossterm::event::poll(std::time::Duration::from_millis(50))? {
             if let Event::Key(key) = crossterm::event::read()? {
-                match key.code {
-                    KeyCode::Char('q') => return Ok(()),
-                    KeyCode::Tab => {
-                        app.accept_ghost_text();
-                    }
-                    KeyCode::Esc => {
-                        app.clear_ghost_text();
-                    }
-                    _ => {
-                        app.handle_key_event(key);
-                    }
+                let should_continue = crate::events::handler::EventHandler::handle_key_event(app, key);
+                if !should_continue {
+                    return Ok(());
                 }
             }
         }
