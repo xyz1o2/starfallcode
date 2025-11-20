@@ -1,0 +1,1 @@
+// Cursor module placeholder
