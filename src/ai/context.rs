@@ -3,6 +3,12 @@ use std::path::Path;
 use tree_sitter::{Language, Parser, Query, QueryCursor};
 use std::fs;
 
+// Helper function to check language type
+fn check_language_type(lang1: Language, lang2: Language) -> bool {
+    lang1 == lang2
+}
+
+#[derive(Clone)]
 pub struct ProjectContext {
     pub symbols: Vec<Symbol>,
     pub file_contents: HashMap<String, String>,
@@ -79,35 +85,33 @@ impl RAGContextBuilder {
         let mut symbols = Vec::new();
         
         // Get appropriate query for the language to extract symbols
-        let query_text = match language {
-            lang if std::ptr::eq(lang, tree_sitter_rust::LANGUAGE.into()) => {
-                r#"
-                    (function_item
-                        name: (identifier) @function_name)
-                    (struct_item
-                        name: (type_identifier) @struct_name)
-                    (impl_item
-                        type: (_) @impl_type)
-                    (trait_item
-                        name: (type_identifier) @trait_name)
-                    (enum_item
-                        name: (type_identifier) @enum_name)
-                    (const_item
-                        name: (identifier) @const_name)
-                    (macro_definition
-                        name: (identifier) @macro_name)
-                "#
-            },
-            lang if std::ptr::eq(lang, tree_sitter_python::LANGUAGE.into()) => {
-                r#"
-                    (function_definition
-                        name: (identifier) @function_name)
-                    (class_definition
-                        name: (identifier) @class_name)
-                    (decorator) @decorator
-                "#
-            },
-            _ => return Ok(vec![]), // Return empty for unsupported languages
+        let query_text = if check_language_type(language, tree_sitter_rust::language()) {
+            r#"
+                (function_item
+                    name: (identifier) @function_name)
+                (struct_item
+                    name: (type_identifier) @struct_name)
+                (impl_item
+                    type: (_) @impl_type)
+                (trait_item
+                    name: (type_identifier) @trait_name)
+                (enum_item
+                    name: (type_identifier) @enum_name)
+                (const_item
+                    name: (identifier) @const_name)
+                (macro_definition
+                    name: (identifier) @macro_name)
+            "#
+        } else if check_language_type(language, tree_sitter_python::language()) {
+            r#"
+                (function_definition
+                    name: (identifier) @function_name)
+                (class_definition
+                    name: (identifier) @class_name)
+                (decorator) @decorator
+            "#
+        } else {
+            return Ok(vec![]); // Return empty for unsupported languages
         };
         
         let query = Query::new(language, query_text).map_err(|e| format!("Query error: {:?}", e))?;
@@ -136,7 +140,7 @@ impl RAGContextBuilder {
         
         Ok(symbols)
     }
-    
+
     pub fn build_context_for_file(file_path: &str, project_context: &ProjectContext, max_context_tokens: usize) -> String {
         let mut context = String::new();
         
@@ -179,10 +183,10 @@ fn get_language_for_file(file_path: &str) -> Option<Language> {
         .to_str()
         .unwrap_or_default()
         .to_lowercase();
-    
+
     match ext.as_str() {
-        "rs" => Some(tree_sitter_rust::LANGUAGE.into()),
-        "py" => Some(tree_sitter_python::LANGUAGE.into()),
+        "rs" => Some(tree_sitter_rust::language().into()),
+        "py" => Some(tree_sitter_python::language().into()),
         _ => None,
     }
 }

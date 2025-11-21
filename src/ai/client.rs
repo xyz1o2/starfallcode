@@ -21,7 +21,7 @@ struct LLMRequest {
     stream: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct LLMMessage {
     role: String,
     content: String,

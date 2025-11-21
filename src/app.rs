@@ -3,6 +3,11 @@ use std::time::{Duration, Instant};
 use tokio::task;
 use crate::ai::{client::LLMClient, fim::{FIMProcessor, FIMContext}, context::RAGContextBuilder};
 
+pub struct ChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
 pub struct App {
     pub buffer: Rope,
     pub cursor: (usize, usize),  // (row, col)
@@ -11,6 +16,9 @@ pub struct App {
     pub debouncer: Debouncer,
     pub llm_client: Option<LLMClient>,
     pub project_context: Option<crate::ai::context::ProjectContext>,
+    pub chat_input: String,
+    pub chat_history: Vec<ChatMessage>,
+    pub is_chat_focused: bool,
 }
 
 pub struct GhostText {
@@ -34,6 +42,9 @@ impl App {
             debouncer: Debouncer::new(Duration::from_millis(300)),
             llm_client: None,
             project_context: None,
+            chat_input: String::new(),
+            chat_history: Vec::new(),
+            is_chat_focused: false,
         }
     }
 
@@ -131,8 +142,8 @@ impl App {
         if let Some(ref client) = self.llm_client {
             let buffer_content = self.buffer.clone();
             let (cursor_row, cursor_col) = self.cursor;
-            let project_context = self.project_context.clone();
-            
+            let project_context = self.project_context.clone(); // This should now work since ProjectContext implements Clone
+
             // Spawn async task to get AI completion
             task::spawn(async move {
                 // Extract FIM context
@@ -143,13 +154,13 @@ impl App {
                     50, // max_prefix_lines
                     20, // max_suffix_lines
                 );
-                
+
                 let prompt = FIMProcessor::build_fim_prompt(&fim_context);
-                
+
                 // For now, just return a simple completion
                 // In a real implementation, we would call the LLM client
                 let completion = " // AI completion would appear here".to_string();
-                
+
                 // This is where we would update the ghost text, but we need to use channels
                 // to communicate back to the main app thread
             });
@@ -157,11 +168,10 @@ impl App {
     }
 
     pub fn accept_ghost_text(&mut self) {
-        if let Some(ghost) = &self.ghost_text {
+        if let Some(ghost) = self.ghost_text.take() {  // Take ownership of ghost text
             let insert_pos = self.buffer.line_to_char(ghost.start_pos.0) + ghost.start_pos.1;
             self.buffer.insert(insert_pos, &ghost.content);
-            self.ghost_text = None;
-            
+
             // Update cursor position after insertion
             self.cursor.1 = ghost.start_pos.1 + ghost.content.len();
         }
@@ -169,6 +179,38 @@ impl App {
 
     pub fn clear_ghost_text(&mut self) {
         self.ghost_text = None;
+    }
+
+    pub fn handle_chat_input(&mut self, c: char) {
+        self.chat_input.push(c);
+    }
+
+    pub fn handle_chat_backspace(&mut self) {
+        self.chat_input.pop();
+    }
+
+    pub fn handle_chat_submit(&mut self) {
+        if !self.chat_input.trim().is_empty() {
+            // Add user message to chat history
+            self.chat_history.push(ChatMessage {
+                role: "user".to_string(),
+                content: self.chat_input.clone(),
+            });
+
+            // Get AI response (placeholder for now)
+            let ai_response = format!("Echo: {}", self.chat_input);
+            self.chat_history.push(ChatMessage {
+                role: "assistant".to_string(),
+                content: ai_response,
+            });
+
+            // Clear input
+            self.chat_input.clear();
+        }
+    }
+
+    pub fn toggle_chat_focus(&mut self) {
+        self.is_chat_focused = !self.is_chat_focused;
     }
 }
 
