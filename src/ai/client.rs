@@ -1,9 +1,7 @@
 use reqwest;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use tokio::time::{sleep, Duration};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct LLMConfig {
     pub api_key: String,
     pub model: String,
@@ -39,6 +37,7 @@ struct Choice {
     finish_reason: Option<String>,
 }
 
+#[derive(Clone)]
 pub struct LLMClient {
     client: reqwest::Client,
     config: LLMConfig,
@@ -52,7 +51,7 @@ impl LLMClient {
         }
     }
 
-    pub async fn generate_completion(&self, prompt: &str) -> Result<String, Box<dyn std::error::Error>> {
+    pub async fn generate_completion(&self, prompt: &str) -> Result<String, String> {
         let request = LLMRequest {
             model: self.config.model.clone(),
             messages: vec![LLMMessage {
@@ -71,17 +70,19 @@ impl LLMClient {
             .header("Content-Type", "application/json")
             .json(&request)
             .send()
-            .await?;
+            .await
+            .map_err(|e| format!("Failed to send request: {}", e))?;
 
         if response.status().is_success() {
-            let llm_response: LLMResponse = response.json().await?;
+            let llm_response: LLMResponse = response.json().await
+                .map_err(|e| format!("Failed to parse response: {}", e))?;
             if let Some(choice) = llm_response.choices.first() {
                 Ok(choice.message.content.clone())
             } else {
-                Err("No choices in response".into())
+                Err("No choices in response".to_string())
             }
         } else {
-            Err(format!("Request failed: {}", response.status()).into())
+            Err(format!("Request failed: {}", response.status()))
         }
     }
 
@@ -89,7 +90,7 @@ impl LLMClient {
         &self,
         prompt: &str,
         callback: impl Fn(String) -> bool, // Return true to continue, false to stop
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         let request = LLMRequest {
             model: self.config.model.clone(),
             messages: vec![LLMMessage {
@@ -108,11 +109,14 @@ impl LLMClient {
             .header("Content-Type", "application/json")
             .json(&request)
             .send()
-            .await?;
+            .await
+            .map_err(|e| format!("Failed to send request: {}", e))?;
 
         if response.status().is_success() {
-            while let Some(chunk) = response.chunk().await? {
-                let text = String::from_utf8(chunk.to_vec())?;
+            while let Some(chunk) = response.chunk().await
+                .map_err(|e| format!("Failed to read chunk: {}", e))? {
+                let text = String::from_utf8(chunk.to_vec())
+                    .map_err(|e| format!("Failed to parse UTF-8: {}", e))?;
                 
                 // Parse the SSE response format
                 for line in text.lines() {
@@ -135,7 +139,7 @@ impl LLMClient {
             }
             Ok(())
         } else {
-            Err(format!("Request failed: {}", response.status()).into())
+            Err(format!("Request failed: {}", response.status()))
         }
     }
 }

@@ -55,7 +55,7 @@ impl Cursor {
         }
     }
 
-    pub fn move_to_line_start(&mut self, buffer: &Buffer) {
+    pub fn move_to_line_start(&mut self, _buffer: &Buffer) {
         self.col = 0;
     }
 

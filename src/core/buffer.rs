@@ -1,5 +1,4 @@
 use ropey::Rope;
-use std::sync::{Arc, Mutex};
 
 /// Core buffer structure for the editor
 pub struct Buffer {

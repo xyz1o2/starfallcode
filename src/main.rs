@@ -7,7 +7,7 @@ mod utils;
 
 use crate::app::App;
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers},
+    event::{DisableMouseCapture, EnableMouseCapture, Event},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -26,9 +26,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create app instance
     let mut app = App::new();
     
-    // Initialize AI client (using a placeholder API key)
-    // In a real application, you would load this from environment or config
-    app.init_ai_client("your-api-key-here".to_string());
+    // Initialize AI client from environment configuration
+    match crate::ai::config::LLMConfig::from_env() {
+        Ok(config) => {
+            app.init_ai_client_with_config(config);
+            eprintln!("✓ LLM client initialized successfully");
+        }
+        Err(e) => {
+            eprintln!("⚠ Warning: Failed to load LLM configuration: {}", e);
+            eprintln!("  Please check your .env file or environment variables");
+            eprintln!("  See ENV_CONFIG.md for configuration instructions");
+        }
+    }
     
     // Initialize project context (optional)
     // app.init_project_context(".");
@@ -57,11 +66,11 @@ async fn run_app<B: ratatui::backend::Backend>(
     app: &mut App,
 ) -> io::Result<()> {
     loop {
-        terminal.draw(|f| ui::editor::render_editor(f, app))?;
+        terminal.draw(|f| ui::chat::render_chat(f, app))?;
 
         if crossterm::event::poll(std::time::Duration::from_millis(50))? {
             if let Event::Key(key) = crossterm::event::read()? {
-                let should_continue = crate::events::handler::EventHandler::handle_key_event(app, key);
+                let should_continue = crate::events::handler::EventHandler::handle_chat_event(app, key);
                 if !should_continue {
                     return Ok(());
                 }

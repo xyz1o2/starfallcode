@@ -1,7 +1,11 @@
-use ropey::Rope;
-use std::time::{Duration, Instant};
-use tokio::task;
-use crate::ai::{client::LLMClient, fim::{FIMProcessor, FIMContext}, context::RAGContextBuilder};
+use crate::ai::{
+    client::LLMClient, 
+    commands::{CommandParser, CommandType},
+    config::LLMConfig,
+    streaming::{StreamHandler, StreamingChatResponse},
+};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 pub struct ChatMessage {
     pub role: String,
@@ -9,42 +13,28 @@ pub struct ChatMessage {
 }
 
 pub struct App {
-    pub buffer: Rope,
-    pub cursor: (usize, usize),  // (row, col)
-    pub scroll: (u16, u16),
-    pub ghost_text: Option<GhostText>,
-    pub debouncer: Debouncer,
     pub llm_client: Option<LLMClient>,
+    pub llm_config: Option<LLMConfig>,
     pub project_context: Option<crate::ai::context::ProjectContext>,
     pub chat_input: String,
     pub chat_history: Vec<ChatMessage>,
-    pub is_chat_focused: bool,
-}
-
-pub struct GhostText {
-    pub content: String,
-    pub start_pos: (usize, usize),  // (row, col) where ghost text starts
+    pub stream_handler: Arc<Mutex<Option<StreamHandler>>>,
+    pub streaming_response: Arc<Mutex<StreamingChatResponse>>,
     pub is_streaming: bool,
 }
 
-pub struct Debouncer {
-    last_input: Instant,
-    delay: Duration,
-}
 
 impl App {
     pub fn new() -> Self {
         Self {
-            buffer: Rope::new(),
-            cursor: (0, 0),
-            scroll: (0, 0),
-            ghost_text: None,
-            debouncer: Debouncer::new(Duration::from_millis(300)),
             llm_client: None,
+            llm_config: None,
             project_context: None,
             chat_input: String::new(),
             chat_history: Vec::new(),
-            is_chat_focused: false,
+            stream_handler: Arc::new(Mutex::new(None)),
+            streaming_response: Arc::new(Mutex::new(StreamingChatResponse::new())),
+            is_streaming: false,
         }
     }
 
@@ -60,126 +50,19 @@ impl App {
         self.llm_client = Some(LLMClient::new(config));
     }
 
-    pub fn init_project_context(&mut self, project_path: &str) {
-        if let Ok(context) = RAGContextBuilder::scan_project(project_path) {
-            self.project_context = Some(context);
-        }
-    }
-
-    pub fn handle_char_input(&mut self, c: char) {
-        let (row, col) = self.cursor;
-        let char_idx = self.buffer.line_to_char(row) + col;
-        self.buffer.insert(char_idx, &c.to_string());
+    pub fn init_ai_client_with_config(&mut self, config: LLMConfig) {
+        let llm_config = crate::ai::client::LLMConfig {
+            api_key: config.api_key.clone(),
+            model: config.model.clone(),
+            base_url: config.base_url.clone(),
+            temperature: config.temperature,
+            max_tokens: config.max_tokens,
+        };
         
-        // Move cursor forward
-        self.cursor.1 += 1;
+        self.llm_config = Some(config);
+        self.llm_client = Some(LLMClient::new(llm_config));
     }
 
-    pub fn handle_backspace(&mut self) {
-        let (row, col) = self.cursor;
-        if col > 0 {
-            let char_idx = self.buffer.line_to_char(row) + col - 1;
-            self.buffer.remove(char_idx..char_idx + 1);
-            self.cursor.1 -= 1;
-        }
-    }
-
-    pub fn handle_enter(&mut self) {
-        let (row, _) = self.cursor;
-        let char_idx = self.buffer.line_to_char(row) + self.cursor.1;
-        self.buffer.insert(char_idx, "\n");
-        self.cursor.0 += 1;
-        self.cursor.1 = 0;
-    }
-
-    pub fn handle_left(&mut self) {
-        if self.cursor.1 > 0 {
-            self.cursor.1 -= 1;
-        } else if self.cursor.0 > 0 {
-            self.cursor.0 -= 1;
-            let line_len = self.buffer.line(self.cursor.0).len_chars();
-            self.cursor.1 = line_len;
-        }
-    }
-
-    pub fn handle_right(&mut self) {
-        let line_len = self.buffer.line(self.cursor.0).len_chars();
-        if self.cursor.1 < line_len {
-            self.cursor.1 += 1;
-        } else if self.cursor.0 + 1 < self.buffer.len_lines() {
-            self.cursor.0 += 1;
-            self.cursor.1 = 0;
-        }
-    }
-
-    pub fn handle_up(&mut self) {
-        if self.cursor.0 > 0 {
-            self.cursor.0 -= 1;
-            let line_len = self.buffer.line(self.cursor.0).len_chars();
-            if self.cursor.1 > line_len {
-                self.cursor.1 = line_len;
-            }
-        }
-    }
-
-    pub fn handle_down(&mut self) {
-        if self.cursor.0 + 1 < self.buffer.len_lines() {
-            self.cursor.0 += 1;
-            let line_len = self.buffer.line(self.cursor.0).len_chars();
-            if self.cursor.1 > line_len {
-                self.cursor.1 = line_len;
-            }
-        }
-    }
-
-    pub fn trigger_completion(&mut self) {
-        if self.debouncer.trigger() {
-            self.request_ai_completion();
-        }
-    }
-
-    fn request_ai_completion(&mut self) {
-        if let Some(ref client) = self.llm_client {
-            let buffer_content = self.buffer.clone();
-            let (cursor_row, cursor_col) = self.cursor;
-            let project_context = self.project_context.clone(); // This should now work since ProjectContext implements Clone
-
-            // Spawn async task to get AI completion
-            task::spawn(async move {
-                // Extract FIM context
-                let fim_context = FIMProcessor::extract_fim_context(
-                    &buffer_content.clone().into(), // We'll need to implement a conversion
-                    cursor_row,
-                    cursor_col,
-                    50, // max_prefix_lines
-                    20, // max_suffix_lines
-                );
-
-                let prompt = FIMProcessor::build_fim_prompt(&fim_context);
-
-                // For now, just return a simple completion
-                // In a real implementation, we would call the LLM client
-                let completion = " // AI completion would appear here".to_string();
-
-                // This is where we would update the ghost text, but we need to use channels
-                // to communicate back to the main app thread
-            });
-        }
-    }
-
-    pub fn accept_ghost_text(&mut self) {
-        if let Some(ghost) = self.ghost_text.take() {  // Take ownership of ghost text
-            let insert_pos = self.buffer.line_to_char(ghost.start_pos.0) + ghost.start_pos.1;
-            self.buffer.insert(insert_pos, &ghost.content);
-
-            // Update cursor position after insertion
-            self.cursor.1 = ghost.start_pos.1 + ghost.content.len();
-        }
-    }
-
-    pub fn clear_ghost_text(&mut self) {
-        self.ghost_text = None;
-    }
 
     pub fn handle_chat_input(&mut self, c: char) {
         self.chat_input.push(c);
@@ -191,53 +74,207 @@ impl App {
 
     pub fn handle_chat_submit(&mut self) {
         if !self.chat_input.trim().is_empty() {
-            // Add user message to chat history
-            self.chat_history.push(ChatMessage {
-                role: "user".to_string(),
-                content: self.chat_input.clone(),
-            });
+            let input = self.chat_input.clone();
+            
+            // 检查是否是命令
+            if CommandParser::has_command(&input) {
+                self.handle_command(&input);
+            } else {
+                // 添加用户消息到聊天历史
+                self.chat_history.push(ChatMessage {
+                    role: "user".to_string(),
+                    content: input.clone(),
+                });
 
-            // Get AI response (placeholder for now)
-            let ai_response = format!("Echo: {}", self.chat_input);
-            self.chat_history.push(ChatMessage {
-                role: "assistant".to_string(),
-                content: ai_response,
-            });
+                // 处理提及
+                let mentions = CommandParser::extract_mentions(&input);
+                let mut response = String::new();
+                
+                for mention in mentions {
+                    response.push_str(&self.process_mention(&mention));
+                    response.push('\n');
+                }
 
-            // Clear input
+                // 如果没有提及，生成 AI 响应
+                if response.is_empty() {
+                    response = format!("Echo: {}", input);
+                }
+
+                // 添加 AI 响应到聊天历史
+                self.chat_history.push(ChatMessage {
+                    role: "assistant".to_string(),
+                    content: response,
+                });
+            }
+
+            // 清空输入
             self.chat_input.clear();
         }
     }
 
-    pub fn toggle_chat_focus(&mut self) {
-        self.is_chat_focused = !self.is_chat_focused;
-    }
-}
+    fn handle_command(&mut self, input: &str) {
+        if let Some(cmd) = CommandParser::parse_command(input) {
+            let response = match cmd.command_type {
+                CommandType::Help => CommandParser::get_help(),
+                CommandType::Clear => {
+                    self.chat_history.clear();
+                    "✓ 聊天历史已清除".to_string()
+                }
+                CommandType::History => {
+                    if self.chat_history.is_empty() {
+                        "聊天历史为空".to_string()
+                    } else {
+                        let mut hist = String::from("📜 聊天历史:\n");
+                        for (i, msg) in self.chat_history.iter().enumerate() {
+                            hist.push_str(&format!("{}. [{}]: {}\n", i + 1, msg.role, msg.content));
+                        }
+                        hist
+                    }
+                }
+                CommandType::Model => {
+                    if let Some(config) = &self.llm_config {
+                        if cmd.args.is_empty() {
+                            format!("📊 当前模型: {}", config.model)
+                        } else {
+                            format!("模型设置为: {}", cmd.args.join(" "))
+                        }
+                    } else {
+                        "未配置 LLM".to_string()
+                    }
+                }
+                CommandType::Provider => {
+                    if let Some(config) = &self.llm_config {
+                        format!("🔌 当前提供商: {}", config.provider.to_string())
+                    } else {
+                        "未配置 LLM".to_string()
+                    }
+                }
+                CommandType::Temperature => {
+                    if let Some(config) = &self.llm_config {
+                        format!("🌡️ 当前温度: {}", config.temperature)
+                    } else {
+                        "未配置 LLM".to_string()
+                    }
+                }
+                CommandType::MaxTokens => {
+                    if let Some(config) = &self.llm_config {
+                        format!("📝 最大令牌数: {}", config.max_tokens)
+                    } else {
+                        "未配置 LLM".to_string()
+                    }
+                }
+                CommandType::Status => {
+                    let mut status = String::from("📈 应用状态:\n");
+                    if let Some(config) = &self.llm_config {
+                        status.push_str(&format!("  提供商: {}\n", config.provider.to_string()));
+                        status.push_str(&format!("  模型: {}\n", config.model));
+                        status.push_str(&format!("  温度: {}\n", config.temperature));
+                        status.push_str(&format!("  最大令牌: {}\n", config.max_tokens));
+                    } else {
+                        status.push_str("  LLM: 未配置\n");
+                    }
+                    status.push_str(&format!("  聊天消息数: {}\n", self.chat_history.len()));
+                    status
+                }
+                CommandType::Unknown => "❌ 未知命令。输入 /help 获取帮助".to_string(),
+            };
 
-impl Debouncer {
-    pub fn new(delay: Duration) -> Self {
-        Self {
-            last_input: Instant::now(),
-            delay,
+            // 添加命令响应到聊天历史
+            self.chat_history.push(ChatMessage {
+                role: "system".to_string(),
+                content: response,
+            });
         }
     }
 
-    pub fn trigger(&mut self) -> bool {
-        if self.last_input.elapsed() > self.delay {
-            self.last_input = Instant::now();
-            true
-        } else {
-            self.last_input = Instant::now();
-            false
+    fn process_mention(&self, mention: &crate::ai::commands::Mention) -> String {
+        use crate::ai::commands::MentionType;
+        
+        match mention.mention_type {
+            MentionType::Model => {
+                if let Some(config) = &self.llm_config {
+                    format!("📊 [模型: {}]", config.model)
+                } else {
+                    "[模型: 未配置]".to_string()
+                }
+            }
+            MentionType::Provider => {
+                if let Some(config) = &self.llm_config {
+                    format!("🔌 [提供商: {}]", config.provider.to_string())
+                } else {
+                    "[提供商: 未配置]".to_string()
+                }
+            }
+            MentionType::History => {
+                format!("📜 [聊天历史: {} 条消息]", self.chat_history.len())
+            }
+            MentionType::File => {
+                format!("📄 [文件: {}]", mention.target)
+            }
+            MentionType::Unknown => {
+                format!("[未知提及: {}]", mention.target)
+            }
         }
     }
-}
 
-// Implement conversion from Rope to Buffer for compatibility
-impl From<Rope> for crate::core::buffer::Buffer {
-    fn from(rope: Rope) -> Self {
-        Self {
-            content: rope,
+    /// 启动流式聊天
+    pub async fn start_streaming_chat(&mut self, prompt: &str) {
+        if let Some(ref client) = self.llm_client {
+            self.is_streaming = true;
+            let handler = StreamHandler::new();
+            *self.stream_handler.lock().await = Some(handler.clone());
+            
+            // 添加用户消息
+            self.chat_history.push(ChatMessage {
+                role: "user".to_string(),
+                content: prompt.to_string(),
+            });
+
+            let client = client.clone();
+            let prompt = prompt.to_string();
+            let handler = handler.clone();
+            let streaming_response = Arc::clone(&self.streaming_response);
+
+            // 在后台任务中处理流式响应
+            tokio::spawn(async move {
+                let callback = |token: String| {
+                    let _ = handler.send_token(token.clone());
+                    true
+                };
+
+                match client.generate_completion_stream(&prompt, callback).await {
+                    Ok(_) => {
+                        let _ = handler.send_done();
+                        let mut resp = streaming_response.lock().await;
+                        resp.mark_complete();
+                    }
+                    Err(e) => {
+                        let _ = handler.send_error(e.to_string());
+                    }
+                }
+            });
         }
     }
+
+    /// 获取流式响应内容
+    pub async fn get_streaming_content(&self) -> String {
+        self.streaming_response.lock().await.get_content().to_string()
+    }
+
+    /// 完成流式响应并添加到历史
+    pub async fn finalize_streaming_response(&mut self) {
+        let response = self.streaming_response.lock().await;
+        if !response.get_content().is_empty() {
+            self.chat_history.push(ChatMessage {
+                role: "assistant".to_string(),
+                content: response.get_content().to_string(),
+            });
+        }
+        drop(response);
+        
+        // 重置流式响应
+        self.streaming_response.lock().await.reset();
+        self.is_streaming = false;
+    }
+
 }
