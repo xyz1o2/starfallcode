@@ -339,8 +339,14 @@ pub fn render_input(f: &mut Frame, app: &mut App, area: Rect) {
             .split(area);
         (chunks[0], chunks[1])
     } else {
-        // 否则只显示输入框
-        (area, Rect::default())
+        // 否则只显示输入框（固定 4 行）
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(4),  // 输入框固定 4 行
+            ])
+            .split(area);
+        (chunks[0], Rect::default())
     };
 
     // 在 input_area 中渲染输入框

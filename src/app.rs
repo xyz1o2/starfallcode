@@ -372,7 +372,7 @@ impl App {
                 .constraints([
                     Constraint::Length(3),      // Header
                     Constraint::Min(5),         // Chat history (flexible, takes remaining space)
-                    Constraint::Min(4),         // Input area (flexible, grows when hints visible)
+                    Constraint::Length(4),      // Input area (固定 4 行，当有提示时会自动扩展)
                 ])
                 .split(f.size());
 

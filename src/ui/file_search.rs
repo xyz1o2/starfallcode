@@ -38,7 +38,7 @@ impl FileSearchEngine {
         // 使用 ignore crate 遍历文件，自动跳过 .gitignore 中的文件
         // 这与 Gemini CLI 的 list_directory 工具类似
         let walker = WalkBuilder::new(".")
-            .hidden(false)           // 不隐藏隐藏文件
+            .hidden(true)            // 隐藏隐藏文件（.git, .env 等）
             .ignore(true)            // 尊重 .gitignore
             .git_ignore(true)        // 尊重 .gitignore
             .max_depth(None)         // 无限深度 - 递归遍历整个树
@@ -51,8 +51,11 @@ impl FileSearchEngine {
                 // 跳过目录，只保留文件
                 if !entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
                     // 跳过 target 目录中的文件（编译产物）
-                    if !path.to_string_lossy().contains("target/") 
-                        && !path.to_string_lossy().contains("target\\") {
+                    let path_str = path.to_string_lossy();
+                    if !path_str.contains("target/") 
+                        && !path_str.contains("target\\")
+                        && !path_str.contains(".git/")
+                        && !path_str.contains(".git\\") {
                         self.cache.push(path);
                     }
                 }
@@ -93,11 +96,17 @@ impl FileSearchEngine {
             return;
         }
 
-        // 分割查询为多个关键词（支持空格和 / 分割）
-        let keywords: Vec<&str> = search_query
-            .split(|c| c == ' ' || c == '/')
-            .filter(|s| !s.is_empty())
-            .collect();
+        // 分割查询为多个关键词（仅在有空格或 / 时分割）
+        let keywords: Vec<&str> = if search_query.contains(' ') || search_query.contains('/') {
+            // 有空格或 / 时，按这些分隔符分割
+            search_query
+                .split(|c| c == ' ' || c == '/')
+                .filter(|s| !s.is_empty())
+                .collect()
+        } else {
+            // 没有空格或 / 时，作为单个关键词
+            vec![search_query]
+        };
 
         // 执行多关键词搜索
         let mut matches: Vec<(String, usize)> = self
@@ -113,25 +122,51 @@ impl FileSearchEngine {
                 });
 
                 if all_match {
-                    // 计算匹配得分
+                    // 参考 Everything 搜索算法的排序策略
                     let mut score = 0usize;
                     
+                    // 获取文件名
+                    let file_name = path.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+                    
+                    // 优先级 1: 完整文件名匹配（Everything 的最高优先级）
+                    if keywords.len() == 1 {
+                        let kw_lower = keywords[0].to_lowercase();
+                        if file_name == kw_lower {
+                            // 精确匹配文件名
+                            score += 1000000;
+                        } else if file_name.starts_with(&kw_lower) {
+                            // 文件名以关键词开头
+                            score += 500000;
+                        } else if file_name.contains(&kw_lower) {
+                            // 文件名包含关键词
+                            score += 100000;
+                        }
+                    }
+                    
+                    // 优先级 2: 路径中的匹配（Everything 的第二优先级）
                     for kw in &keywords {
                         let kw_lower = kw.to_lowercase();
                         
-                        // 文件名匹配得分最高
-                        if let Some(file_name) = path.file_name() {
-                            let file_name_str = file_name.to_string_lossy().to_lowercase();
-                            if file_name_str.contains(&kw_lower) {
-                                score += 10000;
-                            }
-                        }
-                        
                         // 路径中的位置越前面得分越高
                         if let Some(pos) = path_str.find(&kw_lower) {
-                            score += 1000 - (pos as usize / 10);
+                            // 位置越前，得分越高
+                            let position_score = 10000 - (pos as usize / 10).min(10000);
+                            score += position_score;
                         }
                     }
+                    
+                    // 优先级 3: 目录优先级（src/ 目录下的文件优先）
+                    if path_str.starts_with("src/") || path_str.starts_with("src\\") {
+                        score += 50000;
+                    }
+                    
+                    // 优先级 4: 路径深度（浅层文件优先）
+                    let depth = path_str.matches('/').count() + path_str.matches('\\').count();
+                    let depth_score = 1000 - (depth as usize * 100).min(1000);
+                    score += depth_score;
 
                     Some((format!("@{}", path.display()), score))
                 } else {
