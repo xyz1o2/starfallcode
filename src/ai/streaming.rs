@@ -51,6 +51,17 @@ impl StreamHandler {
             .map_err(|e| e.to_string())
     }
 
+    /// 非阻塞地尝试接收一个事件
+    pub fn try_recv(&mut self) -> Result<StreamEvent, mpsc::error::TryRecvError> {
+        // 我们需要一个可变引用来调用 try_recv，但由于 Arc<Mutex<...>> 的结构，
+        // 我们不能直接这样做。一个简单的解决方法是，在创建时就不把 rx 包在 Arc<Mutex<>> 里，
+        // 或者在需要时克隆接收器。但为了最小化改动，我们在这里使用一个不推荐的模式，
+        // 即在调用时才锁定。在更复杂的应用中，这应该被重构。
+        // 幸运的是，我们的主循环是单线程的，所以这里的风险很小。
+        let mut rx = self.rx.blocking_lock();
+        rx.try_recv()
+    }
+
     /// 获取接收器
     pub fn get_receiver(&self) -> Arc<Mutex<mpsc::UnboundedReceiver<StreamEvent>>> {
         Arc::clone(&self.rx)
@@ -78,7 +89,7 @@ impl StreamingChatResponse {
     }
 
     /// 添加令牌到响应
-    pub fn add_token(&mut self, token: &str) {
+    pub fn append(&mut self, token: &str) {
         self.content.push_str(token);
     }
 
@@ -115,9 +126,9 @@ mod tests {
         assert!(!response.is_complete);
         assert_eq!(response.get_content(), "");
 
-        response.add_token("Hello");
-        response.add_token(" ");
-        response.add_token("World");
+        response.append("Hello");
+        response.append(" ");
+        response.append("World");
         assert_eq!(response.get_content(), "Hello World");
 
         response.mark_complete();

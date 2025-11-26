@@ -7,6 +7,7 @@ pub enum LLMProvider {
     Gemini,
     Claude,
     Ollama,
+    DeepSeek,
     LocalServer,
 }
 
@@ -16,6 +17,7 @@ impl LLMProvider {
             "gemini" => LLMProvider::Gemini,
             "claude" => LLMProvider::Claude,
             "ollama" => LLMProvider::Ollama,
+            "deepseek" => LLMProvider::DeepSeek,
             "local" | "localserver" => LLMProvider::LocalServer,
             _ => LLMProvider::OpenAI,
         }
@@ -27,6 +29,7 @@ impl LLMProvider {
             LLMProvider::Gemini => "gemini".to_string(),
             LLMProvider::Claude => "claude".to_string(),
             LLMProvider::Ollama => "ollama".to_string(),
+            LLMProvider::DeepSeek => "deepseek".to_string(),
             LLMProvider::LocalServer => "local_server".to_string(),
         }
     }
@@ -77,6 +80,12 @@ impl LLMConfig {
                 env::var("OLLAMA_BASE_URL")
                     .unwrap_or_else(|_| "http://localhost:11434/api/chat".to_string()),
             ),
+            LLMProvider::DeepSeek => (
+                env::var("DEEPSEEK_API_KEY")?,
+                env::var("DEEPSEEK_MODEL").unwrap_or_else(|_| "deepseek-chat".to_string()),
+                env::var("DEEPSEEK_BASE_URL")
+                    .unwrap_or_else(|_| "https://api.deepseek.com/v1".to_string()),
+            ),
             LLMProvider::LocalServer => (
                 "local".to_string(),
                 env::var("LOCAL_MODEL").unwrap_or_else(|_| "liquid/lfm2-1.2b".to_string()),
@@ -126,6 +135,18 @@ impl LLMConfig {
             base_url: "https://generativelanguage.googleapis.com/v1beta/openai/".to_string(),
             temperature: 0.7,
             max_tokens: 200,
+        }
+    }
+
+    /// Create a default DeepSeek configuration
+    pub fn default_deepseek(api_key: String) -> Self {
+        Self {
+            provider: LLMProvider::DeepSeek,
+            api_key,
+            model: "deepseek-chat".to_string(),
+            base_url: "https://api.deepseek.com/v1".to_string(),
+            temperature: 0.7,
+            max_tokens: 2048,
         }
     }
 
@@ -189,6 +210,14 @@ impl LLMConfig {
                 }
                 if self.model.is_empty() {
                     self.model = "mistral".to_string();
+                }
+            }
+            LLMProvider::DeepSeek => {
+                if self.base_url.is_empty() {
+                    self.base_url = "https://api.deepseek.com/v1".to_string();
+                }
+                if self.model.is_empty() {
+                    self.model = "deepseek-chat".to_string();
                 }
             }
             LLMProvider::LocalServer => {
@@ -305,6 +334,18 @@ impl LLMConfig {
             content.push_str("# OLLAMA_BASE_URL=http://localhost:11434/api/chat\n");
         }
 
+        // DeepSeek 配置
+        content.push_str("\n# === DeepSeek Configuration ===\n");
+        if self.provider == LLMProvider::DeepSeek {
+            content.push_str(&format!("DEEPSEEK_API_KEY={}\n", self.api_key));
+            content.push_str(&format!("DEEPSEEK_MODEL={}\n", self.model));
+            content.push_str(&format!("DEEPSEEK_BASE_URL={}\n", self.base_url));
+        } else {
+            content.push_str("# DEEPSEEK_API_KEY=your_deepseek_api_key_here\n");
+            content.push_str("# DEEPSEEK_MODEL=deepseek-chat\n");
+            content.push_str("# DEEPSEEK_BASE_URL=https://api.deepseek.com/v1\n");
+        }
+
         // 本地服务器配置
         content.push_str("\n# === Local Server Configuration ===\n");
         if self.provider == LLMProvider::LocalServer {
@@ -329,6 +370,7 @@ impl LLMConfig {
             (LLMProvider::OpenAI, "OpenAI GPT 模型 (需要 API 密钥)"),
             (LLMProvider::Claude, "Anthropic Claude 模型 (需要 API 密钥)"),
             (LLMProvider::Gemini, "Google Gemini 模型 (需要 API 密钥)"),
+            (LLMProvider::DeepSeek, "DeepSeek 模型 (需要 API 密钥)"),
             (LLMProvider::Ollama, "Ollama 本地模型 (需要本地安装)"),
             (LLMProvider::LocalServer, "自定义本地服务器"),
         ]

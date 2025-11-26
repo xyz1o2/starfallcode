@@ -65,16 +65,59 @@ async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
 ) -> io::Result<()> {
-    loop {
-        terminal.draw(|f| ui::render_modern_ui(f, app))?;
+        use crossterm::event::EventStream;
+    use futures_util::StreamExt;
+    use std::time::Duration;
 
-        // 使用阻塞读取并检查按键事件类型
-        if let Ok(Event::Key(key)) = crossterm::event::read() {
-            // 只处理按键按下事件，忽略释放事件
-            if key.kind == crossterm::event::KeyEventKind::Press {
-                let should_continue = crate::events::handler::EventHandler::handle_chat_event(app, key);
-                if !should_continue {
-                    return Ok(());
+    let mut reader = EventStream::new();
+    let mut interval = tokio::time::interval(Duration::from_millis(100));
+
+    loop {
+        tokio::select! {
+            // 渲染 UI
+            _ = interval.tick() => {
+                terminal.draw(|f| app.render(f))?;
+            }
+
+            // 处理终端事件
+            Some(Ok(Event::Key(key))) = reader.next() => {
+                if key.kind == crossterm::event::KeyEventKind::Press {
+                    let action = crate::events::handler::EventHandler::handle_chat_event(app, key);
+                    match action {
+                        crate::app::AppAction::SubmitChat => {
+                            app.handle_chat_submit().await;
+                        }
+                        crate::app::AppAction::Quit => {
+                            return Ok(());
+                        }
+                        crate::app::AppAction::None => {}
+                    }
+                }
+            }
+
+            // 处理异步 LLM 响应
+            maybe_stream_event = async { 
+                if let Some(handler) = app.stream_handler.as_mut() {
+                    handler.get_receiver().lock().await.recv().await
+                } else {
+                    // 如果没有流处理器，我们可以使用 pending() 来避免这个分支被立即选择
+                    std::future::pending().await
+                }
+            } => {
+                if let Some(stream_event) = maybe_stream_event {
+                    match stream_event {
+                        crate::ai::streaming::StreamEvent::Token(t) => {
+                            let mut streaming_response = app.streaming_response.lock().await;
+                            streaming_response.append(&t);
+                        }
+                        crate::ai::streaming::StreamEvent::Done => {
+                            app.finalize_streaming_response().await;
+                        }
+                        crate::ai::streaming::StreamEvent::Error(e) => {
+                            eprintln!("Streaming Error: {}", e);
+                            app.finalize_streaming_response().await;
+                        }
+                    }
                 }
             }
         }

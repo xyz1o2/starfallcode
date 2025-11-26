@@ -1,60 +1,52 @@
+use crate::app::{App, AppAction};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use crate::app::App;
 
 pub struct EventHandler;
 
 impl EventHandler {
-    pub fn handle_chat_event(app: &mut App, key_event: KeyEvent) -> bool {
-        // 如果命令提示可见，优先处理导航
+    pub fn handle_chat_event(app: &mut App, key: KeyEvent) -> AppAction {
         if app.command_hints.visible {
-            match key_event.code {
+            match key.code {
                 KeyCode::Up => {
                     app.command_hints.select_previous();
-                    return true;
+                    return AppAction::None;
                 }
                 KeyCode::Down => {
                     app.command_hints.select_next();
-                    return true;
+                    return AppAction::None;
                 }
-                KeyCode::Enter | KeyCode::Tab => {
-                    // Enter 或 Tab 键自动完成选中的命令
-                    if let Some(hint) = app.command_hints.get_selected() {
-                        app.chat_input = hint.command.clone();
+                KeyCode::Tab | KeyCode::Enter => {
+                    if let Some(completed) = app.command_hints.get_selected_item() {
+                        app.input_text = completed;
                     }
-                    // 如果是 Enter，则继续执行提交逻辑
-                    if key_event.code == KeyCode::Enter {
-                        app.handle_chat_submit();
-                    } else {
-                        // 如果是 Tab，只自动完成，不提交
-                        app.command_hints.clear();
+                    app.command_hints.visible = false;
+                    if key.code == KeyCode::Enter {
+                        return AppAction::SubmitChat;
                     }
-                    return true;
+                    return AppAction::None;
                 }
                 KeyCode::Esc => {
-                    app.command_hints.clear();
-                    return true;
+                    app.command_hints.visible = false;
+                    return AppAction::None;
                 }
                 _ => {}
             }
         }
 
-        match key_event.code {
-            KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-                false // Exit application
-            }
-            KeyCode::Enter => {
-                app.handle_chat_submit();
-                true
-            }
+        match key.code {
+            KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => AppAction::Quit,
+            KeyCode::Enter => AppAction::SubmitChat,
             KeyCode::Backspace => {
-                app.handle_chat_backspace();
-                true
+                app.input_text.pop();
+                app.command_hints.update_input(&app.input_text);
+                AppAction::None
             }
             KeyCode::Char(c) => {
-                app.handle_chat_input(c);
-                true
+                app.input_text.push(c);
+                app.command_hints.update_input(&app.input_text);
+                AppAction::None
             }
-            _ => true,
+            _ => AppAction::None,
         }
     }
 }
