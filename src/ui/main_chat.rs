@@ -284,7 +284,7 @@ impl MainChatArea {
     }
 
     /// Render scrollbar
-    fn render_scrollbar(&self, frame: &mut Frame, area: Rect, theme: &ModernTheme) {
+    fn render_scrollbar(&self, frame: &mut Frame, area: Rect, _theme: &ModernTheme) {
         let scrollbar = Scrollbar::default()
             .orientation(ScrollbarOrientation::VerticalRight)
             .begin_symbol(Some("↑"))
@@ -308,6 +308,9 @@ impl MainChatArea {
         match key.code {
             KeyCode::Enter => {
                 ChatAction::SendMessage
+            }
+            KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                ChatAction::ClearHistory
             }
             KeyCode::Char(c) => {
                 self.input_text.insert(self.cursor_position, c);
@@ -367,9 +370,6 @@ impl MainChatArea {
             KeyCode::Down if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.scroll_down(1);
                 ChatAction::ScrollDown
-            }
-            KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                ChatAction::ClearHistory
             }
             _ => ChatAction::None,
         }

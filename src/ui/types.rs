@@ -3,7 +3,6 @@ use ratatui::{
     style::{Color, Style},
 };
 use chrono::{DateTime, Utc};
-use std::collections::HashSet;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PanelType {

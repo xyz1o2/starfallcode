@@ -4,6 +4,7 @@ use crate::ai::{
     config::LLMConfig,
     streaming::{StreamHandler, StreamingChatResponse},
 };
+use crate::ui::CommandHints;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -21,6 +22,7 @@ pub struct App {
     pub stream_handler: Arc<Mutex<Option<StreamHandler>>>,
     pub streaming_response: Arc<Mutex<StreamingChatResponse>>,
     pub is_streaming: bool,
+    pub command_hints: CommandHints,
 }
 
 
@@ -35,6 +37,7 @@ impl App {
             stream_handler: Arc::new(Mutex::new(None)),
             streaming_response: Arc::new(Mutex::new(StreamingChatResponse::new())),
             is_streaming: false,
+            command_hints: CommandHints::new(),
         }
     }
 
@@ -81,10 +84,14 @@ impl App {
 
     pub fn handle_chat_input(&mut self, c: char) {
         self.chat_input.push(c);
+        // 激活命令提示
+        self.command_hints.activate(&self.chat_input);
     }
 
     pub fn handle_chat_backspace(&mut self) {
         self.chat_input.pop();
+        // 更新命令提示
+        self.command_hints.activate(&self.chat_input);
     }
 
     pub fn handle_chat_submit(&mut self) {
@@ -122,8 +129,9 @@ impl App {
                 });
             }
 
-            // 清空输入
+            // 清空输入和命令提示
             self.chat_input.clear();
+            self.command_hints.clear();
         }
     }
 

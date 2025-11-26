@@ -5,9 +5,8 @@ use crate::ui::types::{
 };
 use crate::ui::theme::ModernTheme;
 use ratatui::{
-    backend::Backend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame,
