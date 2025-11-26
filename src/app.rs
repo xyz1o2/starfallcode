@@ -310,6 +310,9 @@ impl App {
                 role: Role::Assistant,
                 content: ai_response.clone(),
             });
+            
+            // 检测修改指令并立即显示确认对话
+            // 不等待用户继续输入
             self.process_ai_response_for_modifications(&ai_response);
         }
         

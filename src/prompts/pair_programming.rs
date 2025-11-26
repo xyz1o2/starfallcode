@@ -8,16 +8,65 @@ pub struct PairProgrammingPrompts;
 
 impl PromptGenerator for PairProgrammingPrompts {
     fn generate(&self, message_count: usize) -> String {
+        // 核心思想：按优先级注入上下文
+        // 1. 加载项目配置文件 (CLAUDE.md / .claude/config.md)
+        let project_config = Self::load_project_config();
+        
+        // 2. 基础身份和角色
         let base_prompt = Self::base_prompt();
-        let context_prompt = Self::context_prompt(message_count);
-        let formatting_prompt = Self::formatting_prompt();
+        
+        // 3. 项目上下文 (自动扫描)
         let project_context = Self::project_context();
+        
+        // 4. 根据对话历史的适应性提示
+        let context_prompt = Self::context_prompt(message_count);
+        
+        // 5. 格式化和文件操作指南
+        let formatting_prompt = Self::formatting_prompt();
 
-        format!("{}\n\n{}\n\n{}\n\n{}", base_prompt, project_context, context_prompt, formatting_prompt)
+        // 按优先级组合
+        format!(
+            "{}\n\n{}\n\n{}\n\n{}\n\n{}",
+            project_config,
+            base_prompt,
+            project_context,
+            context_prompt,
+            formatting_prompt
+        )
     }
 }
 
 impl PairProgrammingPrompts {
+    /// 加载项目配置文件 (CLAUDE.md / .claude/config.md)
+    /// 这是 Claude CLI / Gemini CLI 的核心思想
+    fn load_project_config() -> String {
+        let cwd = std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| ".".to_string());
+        
+        // 按优先级查找配置文件
+        let config_paths = vec![
+            format!("{}/.claude/config.md", cwd),
+            format!("{}/CLAUDE.md", cwd),
+            format!("{}/GEMINI.md", cwd),
+            format!("{}/AI.md", cwd),
+        ];
+        
+        for path in config_paths {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if !content.trim().is_empty() {
+                    return format!(
+                        "**Project Configuration (from {}):**\n\n{}",
+                        path, content
+                    );
+                }
+            }
+        }
+        
+        // 如果没有找到配置文件，返回空字符串
+        String::new()
+    }
+    
     /// 项目上下文信息 - 动态扫描用户工作目录
     fn project_context() -> String {
         let os = std::env::consts::OS;
@@ -37,21 +86,42 @@ impl PairProgrammingPrompts {
 - **Operating System:** {} ({})
 - **Current Working Directory:** {}
 - **Project Type:** {}
-
 **Directory Structure:**
 ```
 {}
 ```
+**When Creating/Modifying Files - IMPORTANT:**
+ALWAYS announce your intention BEFORE providing code:
 
-**When Creating/Modifying Files:**
-Always use the explicit format:
-- `create file \`path/to/file.ext\``
-- `modify \`path/to/file.ext\``
-- `delete \`path/to/file.ext\``
-- Follow with a code block containing the content
+1. First, state your intention clearly:
+   - "I will create a file at `src/main.rs`"
+   - "I will modify `config.json`"
+   - "I will delete `old_file.txt`"
 
-The system will automatically detect these instructions and show a confirmation dialog before executing file operations.
-"#,
+2. Then provide the file operation instruction:
+   - `create file \`path/to/file.ext\``
+   - `modify \`path/to/file.ext\``
+   - `delete \`path/to/file.ext\``
+
+3. Finally, provide the code block:
+   ```language
+   code content here
+   ```
+
+Example:
+"I will create a new HTML file at `src/index.html` with a simple Hello World page.
+
+create file \`src/index.html\`
+
+\`\`\`html
+<!DOCTYPE html>
+<html>
+<head><title>Hello</title></head>
+<body><h1>Hello, World!</h1></body>
+</html>
+\`\`\`"
+
+The system will automatically detect these instructions and show a confirmation dialog BEFORE executing file operations. Wait for user confirmation before proceeding."#,
             os, arch, cwd, project_type, dir_tree
         )
     }
