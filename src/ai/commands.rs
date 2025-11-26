@@ -49,7 +49,7 @@ pub struct CommandParser;
 
 impl CommandParser {
     /// 解析命令（以 / 开头）
-    pub fn parse_command(input: &str) -> Option<Command> {
+    pub fn parse(input: &str) -> Option<Command> {
         if !input.starts_with('/') {
             return None;
         }
@@ -169,7 +169,7 @@ impl CommandParser {
     }
 
     /// 获取命令帮助文本
-    pub fn get_help() -> String {
+    pub fn get_help_text() -> String {
         r#"
 ╔════════════════════════════════════════════════════════════════╗
 ║                    基础命令                                    ║

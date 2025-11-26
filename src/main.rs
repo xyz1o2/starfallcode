@@ -4,6 +4,7 @@ mod core;
 mod ai;
 mod events;
 mod utils;
+mod prompts;
 
 use crate::app::App;
 use crossterm::{

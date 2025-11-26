@@ -5,6 +5,7 @@ use crate::ai::streaming::{StreamHandler, StreamingChatResponse};
 use crate::core::history::ChatHistory;
 use crate::core::message::{Message, Role};
 use crate::ui::command_hints::CommandHints;
+use crate::prompts;
 use ratatui::{
     layout::{Constraint, Direction, Layout},
     Frame,
@@ -101,6 +102,14 @@ impl App {
         }
     }
 
+    /// 生成系统提示，用于改进 AI 配对编程的回复质量
+    /// 
+    /// 使用 prompts 模块中的提示词生成器，根据对话历史长度生成适应性提示
+    fn generate_system_prompt(&self) -> String {
+        let message_count = self.chat_history.get_messages().len();
+        prompts::get_pair_programming_prompt(message_count)
+    }
+
     pub async fn start_streaming_chat(&mut self, prompt: &str) {
         if let Some(ref client) = self.llm_client {
             self.is_streaming = true;
@@ -109,6 +118,7 @@ impl App {
 
             let client = client.clone();
             let prompt = prompt.to_string();
+            let system_prompt = self.generate_system_prompt();
 
             tokio::spawn(async move {
                 let handler_clone = handler.clone();
@@ -117,7 +127,10 @@ impl App {
                     true
                 };
 
-                match client.generate_completion_stream(&prompt, callback).await {
+                // 构建完整的提示，包含系统提示和用户消息
+                let full_prompt = format!("System: {}\n\nUser: {}", system_prompt, prompt);
+
+                match client.generate_completion_stream(&full_prompt, callback).await {
                     Ok(_) => {
                         let _ = handler.send_done();
                     }

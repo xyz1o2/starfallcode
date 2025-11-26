@@ -1,5 +1,5 @@
 /// 高级 LLM 客户端 - 支持多提供商、重试、速率限制等
-use crate::ai::client::{LLMClient, LLMConfig as ClientConfig};
+use crate::ai::client::LLMClient;
 use crate::ai::config::{LLMConfig, LLMProvider};
 use std::time::Duration;
 use tokio::time::sleep;
@@ -37,15 +37,7 @@ impl AdvancedLLMClient {
 
     /// 使用自定义配置创建高级客户端
     pub fn with_advanced_config(config: LLMConfig, advanced_config: AdvancedClientConfig) -> Self {
-        let client_config = ClientConfig {
-            api_key: config.api_key.clone(),
-            model: config.model.clone(),
-            base_url: config.base_url.clone(),
-            temperature: config.temperature,
-            max_tokens: config.max_tokens,
-        };
-
-        let client = LLMClient::new(client_config);
+        let client = LLMClient::new(config.clone());
 
         Self {
             client,
@@ -53,81 +45,9 @@ impl AdvancedLLMClient {
             advanced_config,
         }
     }
-
-    /// 带重试的聊天完成
-    pub async fn generate_completion_with_retry(&self, prompt: &str) -> Result<String, String> {
-        let mut last_error = String::new();
-
-        for attempt in 0..=self.advanced_config.max_retries {
-            match self.client.generate_completion(prompt).await {
-                Ok(response) => {
-                    if attempt > 0 {
-                        eprintln!("✓ 重试成功 (尝试 {})", attempt + 1);
-                    }
-                    return Ok(response);
-                }
-                Err(e) => {
-                    last_error = e.clone();
-
-                    if attempt < self.advanced_config.max_retries {
-                        let delay = self.advanced_config.retry_delay_ms * (2_u64.pow(attempt));
-                        eprintln!(
-                            "⚠ 请求失败 (尝试 {}): {}. 在 {}ms 后重试...",
-                            attempt + 1,
-                            e,
-                            delay
-                        );
-                        sleep(Duration::from_millis(delay)).await;
-                    }
-                }
-            }
-        }
-
-        Err(format!(
-            "在 {} 次尝试后失败: {}",
-            self.advanced_config.max_retries + 1,
-            last_error
-        ))
-    }
-
-    /// 带重试的流式聊天完成
-    pub async fn generate_completion_stream_with_retry(
-        &self,
-        prompt: &str,
-        callback: impl Fn(String) -> bool,
-    ) -> Result<(), String> {
-        let mut last_error = String::new();
-
-        for attempt in 0..=self.advanced_config.max_retries {
-            match self.client.generate_completion_stream(prompt, &callback).await {
-                Ok(_) => {
-                    if attempt > 0 {
-                        eprintln!("✓ 流式请求成功 (尝试 {})", attempt + 1);
-                    }
-                    return Ok(());
-                }
-                Err(e) => {
-                    last_error = e.clone();
-
-                    if attempt < self.advanced_config.max_retries {
-                        let delay = self.advanced_config.retry_delay_ms * (2_u64.pow(attempt));
-                        eprintln!(
-                            "⚠ 流式请求失败 (尝试 {}): {}. 在 {}ms 后重试...",
-                            attempt + 1,
-                            e,
-                            delay
-                        );
-                        sleep(Duration::from_millis(delay)).await;
-                    }
-                }
-            }
-        }
-
-        Err(format!(
-            "流式请求在 {} 次尝试后失败: {}",
-            self.advanced_config.max_retries + 1,
-            last_error
-        ))
+    /// 获取底层客户端的引用（用于直接调用流式方法）
+    pub fn client(&self) -> &LLMClient {
+        &self.client
     }
 
     /// 获取提供商信息
