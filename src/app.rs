@@ -147,8 +147,8 @@ impl App {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(3), // Header
-                Constraint::Min(5),    // Chat history
-                Constraint::Length(if self.command_hints.visible { 12 } else { 4 }), // Input area
+                Constraint::Min(10),   // Chat history (flexible, takes remaining space)
+                Constraint::Length(if self.command_hints.visible { 10 } else { 4 }), // Input area (max 10 with hints)
             ])
             .split(f.size());
 

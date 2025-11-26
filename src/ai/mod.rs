@@ -5,3 +5,4 @@ pub mod context;
 pub mod fim;
 pub mod streaming;
 pub mod advanced_client;
+pub mod tools;

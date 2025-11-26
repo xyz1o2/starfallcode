@@ -68,7 +68,21 @@ pub fn render_history(f: &mut Frame, app: &App, area: Rect) {
     let mut lines = Vec::new();
 
     if app.chat_history.is_empty() && !app.is_streaming {
-        // ... (welcome message remains the same)
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled(
+                "✨ Welcome to Starfellcode Pair Programming",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+        lines.push(Line::from(""));
+        lines.push(Line::from("💡 Tips:"));
+        lines.push(Line::from("  • Type / to see available commands"));
+        lines.push(Line::from("  • Use @file to mention files"));
+        lines.push(Line::from("  • Enable YOLO mode for quick operations"));
+        lines.push(Line::from(""));
     } else {
         for msg in app.chat_history.get_messages() {
             let (prefix, color) = match msg.role {
@@ -77,12 +91,35 @@ pub fn render_history(f: &mut Frame, app: &App, area: Rect) {
                 crate::core::message::Role::System => ("⚙️ System", Color::Yellow),
             };
 
+            // 消息头部 - 使用简单的分隔线
             lines.push(Line::from(vec![
                 Span::styled(
-                    format!("{}: ", prefix),
+                    format!("▶ {}", prefix),
                     Style::default().fg(color).add_modifier(Modifier::BOLD),
                 ),
-                Span::raw(&msg.content),
+                Span::styled(
+                    " ".to_string() + &"─".repeat((area.width as usize).saturating_sub(prefix.len() + 4)),
+                    Style::default().fg(color),
+                ),
+            ]));
+
+            // 消息内容（支持多行）
+            for content_line in msg.content.lines() {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        "  ",
+                        Style::default().fg(color),
+                    ),
+                    Span::raw(content_line),
+                ]));
+            }
+
+            // 消息底部 - 简单分隔
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "─".repeat(area.width as usize),
+                    Style::default().fg(color),
+                ),
             ]));
             lines.push(Line::from(""));
         }
@@ -91,21 +128,63 @@ pub fn render_history(f: &mut Frame, app: &App, area: Rect) {
             let streaming_content = app.streaming_response.try_lock()
                 .map(|resp| resp.content.clone())
                 .unwrap_or_default();
+            
             lines.push(Line::from(vec![
                 Span::styled(
-                    "🤖 AI: ",
+                    "▶ 🤖 AI",
                     Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    format!("{} ⏳", streaming_content),
-                    Style::default().fg(Color::Cyan),
+                    " ".to_string() + &"─".repeat((area.width as usize).saturating_sub(10)),
+                    Style::default().fg(Color::Green),
+                ),
+            ]));
+
+            for content_line in streaming_content.lines() {
+                let line_str = content_line.to_string();
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        "  ",
+                        Style::default().fg(Color::Green),
+                    ),
+                    Span::styled(
+                        line_str,
+                        Style::default().fg(Color::Cyan),
+                    ),
+                ]));
+            }
+
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "  ",
+                    Style::default().fg(Color::Green),
+                ),
+                Span::styled(
+                    "⏳ Streaming...",
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::ITALIC),
                 ),
             ]));
         }
     }
 
+    // 计算需要的行数
+    let total_lines = lines.len() as u16;
+    let available_height = area.height.saturating_sub(2); // 减去边框
+    
+    // 如果内容超过可用高度，计算滚动偏移
+    let scroll_offset = if total_lines > available_height {
+        (total_lines - available_height) as usize
+    } else {
+        0
+    };
+
     let history = Paragraph::new(lines)
-        .wrap(Wrap { trim: true });
+        .wrap(Wrap { trim: true })
+        .scroll((scroll_offset as u16, 0))
+        .block(Block::default()
+            .borders(Borders::ALL)
+            .title(" 💬 Chat History ")
+            .style(Style::default().fg(Color::DarkGray)));
 
     f.render_widget(history, area);
 }
