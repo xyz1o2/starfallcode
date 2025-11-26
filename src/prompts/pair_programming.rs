@@ -11,12 +11,149 @@ impl PromptGenerator for PairProgrammingPrompts {
         let base_prompt = Self::base_prompt();
         let context_prompt = Self::context_prompt(message_count);
         let formatting_prompt = Self::formatting_prompt();
+        let project_context = Self::project_context();
 
-        format!("{}\n\n{}\n\n{}", base_prompt, context_prompt, formatting_prompt)
+        format!("{}\n\n{}\n\n{}\n\n{}", base_prompt, project_context, context_prompt, formatting_prompt)
     }
 }
 
 impl PairProgrammingPrompts {
+    /// 项目上下文信息 - 动态扫描用户工作目录
+    fn project_context() -> String {
+        let os = std::env::consts::OS;
+        let arch = std::env::consts::ARCH;
+        let cwd = std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "unknown".to_string());
+        
+        // 扫描目录结构（最多3层深度）
+        let dir_tree = Self::scan_directory_tree(&cwd, 3);
+        
+        // 检测项目类型
+        let project_type = Self::detect_project_type(&cwd);
+        
+        format!(
+            r#"**Project Context:**
+- **Operating System:** {} ({})
+- **Current Working Directory:** {}
+- **Project Type:** {}
+
+**Directory Structure:**
+```
+{}
+```
+
+**When Creating/Modifying Files:**
+Always use the explicit format:
+- `create file \`path/to/file.ext\``
+- `modify \`path/to/file.ext\``
+- `delete \`path/to/file.ext\``
+- Follow with a code block containing the content
+
+The system will automatically detect these instructions and show a confirmation dialog before executing file operations.
+"#,
+            os, arch, cwd, project_type, dir_tree
+        )
+    }
+    
+    /// 扫描目录树结构
+    fn scan_directory_tree(path: &str, max_depth: usize) -> String {
+        Self::scan_dir_recursive(path, 0, max_depth, "")
+    }
+    
+    /// 递归扫描目录
+    fn scan_dir_recursive(path: &str, current_depth: usize, max_depth: usize, prefix: &str) -> String {
+        if current_depth > max_depth {
+            return String::new();
+        }
+        
+        let mut result = String::new();
+        
+        if let Ok(entries) = std::fs::read_dir(path) {
+            let mut items: Vec<_> = entries
+                .filter_map(|e| e.ok())
+                .collect();
+            items.sort_by_key(|a| {
+                (
+                    !a.path().is_dir(),
+                    a.file_name().to_string_lossy().to_string(),
+                )
+            });
+            
+            for (idx, entry) in items.iter().enumerate() {
+                let is_last = idx == items.len() - 1;
+                let path = entry.path();
+                let file_name = entry.file_name();
+                let file_name_str = file_name.to_string_lossy();
+                
+                // 跳过隐藏文件和常见的忽略目录
+                if file_name_str.starts_with('.') 
+                    || file_name_str == "node_modules"
+                    || file_name_str == "target"
+                    || file_name_str == ".git"
+                    || file_name_str == "__pycache__"
+                {
+                    continue;
+                }
+                
+                let connector = if is_last { "└── " } else { "├── " };
+                let next_prefix = if is_last { "    " } else { "│   " };
+                
+                result.push_str(&format!("{}{}{}\n", prefix, connector, file_name_str));
+                
+                if path.is_dir() && current_depth < max_depth {
+                    let sub_tree = Self::scan_dir_recursive(
+                        path.to_str().unwrap_or(""),
+                        current_depth + 1,
+                        max_depth,
+                        &format!("{}{}", prefix, next_prefix),
+                    );
+                    result.push_str(&sub_tree);
+                }
+            }
+        }
+        
+        result
+    }
+    
+    /// 检测项目类型
+    fn detect_project_type(path: &str) -> String {
+        let mut project_types = Vec::new();
+        
+        // 检查 Cargo.toml
+        if std::path::Path::new(&format!("{}/Cargo.toml", path)).exists() {
+            project_types.push("Rust (Cargo)");
+        }
+        
+        // 检查 package.json
+        if std::path::Path::new(&format!("{}/package.json", path)).exists() {
+            project_types.push("Node.js/JavaScript");
+        }
+        
+        // 检查 pyproject.toml 或 requirements.txt
+        if std::path::Path::new(&format!("{}/pyproject.toml", path)).exists()
+            || std::path::Path::new(&format!("{}/requirements.txt", path)).exists()
+        {
+            project_types.push("Python");
+        }
+        
+        // 检查 go.mod
+        if std::path::Path::new(&format!("{}/go.mod", path)).exists() {
+            project_types.push("Go");
+        }
+        
+        // 检查 pom.xml
+        if std::path::Path::new(&format!("{}/pom.xml", path)).exists() {
+            project_types.push("Java (Maven)");
+        }
+        
+        if project_types.is_empty() {
+            "Unknown/Generic Project".to_string()
+        } else {
+            project_types.join(", ")
+        }
+    }
+
     /// 基础系统提示
     fn base_prompt() -> &'static str {
         "You are an expert AI pair programming assistant. Your role is to:
@@ -64,13 +201,37 @@ impl PairProgrammingPrompts {
 
     /// 格式化和输出指南
     fn formatting_prompt() -> &'static str {
-        "**Formatting Guidelines:**
+        r#"**Formatting Guidelines:**
 - Always format code in markdown code blocks with language specification
 - Use clear section headers for different parts of your response
 - Include comments in code for complex logic
 - Provide brief explanations before and after code examples
 - Use bullet points for lists and step-by-step instructions
-- Highlight important warnings or considerations"
+- Highlight important warnings or considerations
+
+**File Creation Instructions:**
+When you want to create or modify files, use the following format:
+
+For creating a new file:
+create file `path/to/file.ext`
+
+Then provide the code in a markdown code block:
+```language
+code content here
+```
+
+For modifying an existing file:
+modify `path/to/file.ext`
+
+Then provide the new code in a markdown code block.
+
+Examples:
+- create file `src/main.rs`
+- create file `index.html`
+- modify `src/app.rs`
+- modify `package.json`
+
+This format allows the system to automatically detect and confirm file operations with the user before execution."#
     }
 }
 

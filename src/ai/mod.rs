@@ -6,3 +6,4 @@ pub mod fim;
 pub mod streaming;
 pub mod advanced_client;
 pub mod tools;
+pub mod code_modification;

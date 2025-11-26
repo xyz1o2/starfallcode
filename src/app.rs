@@ -2,6 +2,7 @@ use crate::ai::client::LLMClient;
 use crate::ai::commands::{CommandParser, CommandType};
 use crate::ai::config::LLMConfig;
 use crate::ai::streaming::{StreamHandler, StreamingChatResponse};
+use crate::ai::code_modification::{AICodeModificationDetector, CodeModificationOp, CodeDiff, CodeMatcher};
 use crate::core::history::ChatHistory;
 use crate::core::message::{Message, Role};
 use crate::ui::command_hints::CommandHints;
@@ -40,6 +41,13 @@ pub enum AppAction {
     SubmitChat,
 }
 
+/// 代码修改确认选择
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ModificationChoice {
+    Confirm,
+    Cancel,
+}
+
 pub struct App {
     pub should_quit: bool,
     pub chat_history: ChatHistory,
@@ -51,6 +59,12 @@ pub struct App {
     pub streaming_response: Arc<Mutex<StreamingChatResponse>>,
     pub command_hints: CommandHints,
     pub file_command_handler: FileCommandHandler,
+    
+    // AI 代码修改确认相关
+    pub pending_modifications: Vec<(CodeModificationOp, Option<CodeDiff>)>,
+    pub modification_confirmation_pending: bool,
+    pub modification_selected_index: usize,
+    pub modification_choice: ModificationChoice,
 }
 
 impl App {
@@ -66,6 +80,10 @@ impl App {
             streaming_response: Arc::new(Mutex::new(StreamingChatResponse::new())),
             command_hints: CommandHints::new(),
             file_command_handler: FileCommandHandler::new(),
+            pending_modifications: Vec::new(),
+            modification_confirmation_pending: false,
+            modification_selected_index: 0,
+            modification_choice: ModificationChoice::Confirm,
         }
     }
 
@@ -151,6 +169,68 @@ impl App {
         }
     }
 
+    /// 处理 AI 响应中的代码修改指令
+    pub fn process_ai_response_for_modifications(&mut self, response: &str) {
+        // 首先检测明确的修改指令
+        let mut ops = AICodeModificationDetector::detect_modifications(response);
+        
+        // 如果没有明确指令，检测隐含的修改意图
+        if ops.is_empty() {
+            ops = AICodeModificationDetector::detect_implicit_modifications(response);
+        }
+        
+        if ops.is_empty() {
+            return;
+        }
+
+        // 为每个修改操作生成 Diff
+        for op in ops {
+            let diff = match &op {
+                CodeModificationOp::Create { path, content } => {
+                    // 创建操作：显示新内容
+                    Some(CodeDiff {
+                        file_path: path.clone(),
+                        old_content: String::new(),
+                        new_content: content.clone(),
+                    })
+                }
+                CodeModificationOp::Modify { path, search, replace } => {
+                    // 修改操作：尝试匹配并生成 Diff
+                    match CodeMatcher::find_and_replace(path, search, replace) {
+                        Ok(diff) => Some(diff),
+                        Err(e) => {
+                            // 匹配失败，显示错误信息
+                            self.chat_history.add_message(Message {
+                                role: Role::System,
+                                content: format!("❌ 代码匹配失败: {}", e),
+                            });
+                            None
+                        }
+                    }
+                }
+                CodeModificationOp::Delete { path } => {
+                    // 删除操作：显示文件路径
+                    Some(CodeDiff {
+                        file_path: path.clone(),
+                        old_content: format!("(删除文件: {})", path),
+                        new_content: String::new(),
+                    })
+                }
+            };
+
+            if let Some(diff) = diff {
+                self.pending_modifications.push((op, Some(diff)));
+            }
+        }
+
+        // 如果有待确认的修改，激活确认对话
+        if !self.pending_modifications.is_empty() {
+            self.modification_confirmation_pending = true;
+            self.modification_selected_index = 0;
+            self.modification_choice = ModificationChoice::Confirm;
+        }
+    }
+
     /// 生成系统提示，用于改进 AI 配对编程的回复质量
     /// 
     /// 使用 prompts 模块中的提示词生成器，根据对话历史长度生成适应性提示
@@ -204,17 +284,35 @@ impl App {
         ui::render_header(f, self, chunks[0]);
         ui::render_history(f, self, chunks[1]);
         ui::render_input(f, self, chunks[2]);
+        
+        // 如果有待确认的修改，显示确认对话
+        if self.modification_confirmation_pending {
+            ui::render_modification_confirmation(f, self, f.size());
+        }
     }
 
     pub async fn finalize_streaming_response(&mut self) {
-        let mut response = self.streaming_response.lock().await;
-        if !response.content.is_empty() {
+        let ai_response = {
+            let mut response = self.streaming_response.lock().await;
+            if !response.content.is_empty() {
+                let content = response.content.clone();
+                response.reset();
+                Some(content)
+            } else {
+                response.reset();
+                None
+            }
+        };
+        
+        // 在释放 response 借用后，处理 AI 响应中的代码修改指令
+        if let Some(ai_response) = ai_response {
             self.chat_history.add_message(Message {
                 role: Role::Assistant,
-                content: response.content.clone(),
+                content: ai_response.clone(),
             });
+            self.process_ai_response_for_modifications(&ai_response);
         }
-        response.reset();
+        
         self.is_streaming = false;
         self.stream_handler = None;
     }

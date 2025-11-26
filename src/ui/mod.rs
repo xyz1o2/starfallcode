@@ -65,7 +65,7 @@ pub fn render_header(f: &mut Frame, app: &App, area: Rect) {
 }
 
 /// 渲染 Diff 对比
-fn render_diff_lines(lines: &mut Vec<Line>, old_content: &str, new_content: &str, area_width: u16) {
+fn render_diff_lines(lines: &mut Vec<Line>, old_content: &str, new_content: &str, _area_width: u16) {
     lines.push(Line::from(vec![
         Span::styled(
             "  ┌─ Diff 对比",
@@ -188,14 +188,13 @@ pub fn render_history(f: &mut Frame, app: &App, area: Rect) {
             } else {
                 // 消息内容 - 支持代码块检测
                 let mut in_code_block = false;
-                let mut code_lang = String::new();
                 
                 for content_line in msg.content.lines() {
                     // 检测代码块开始
                     if content_line.trim_start().starts_with("```") {
                         if !in_code_block {
                             in_code_block = true;
-                            code_lang = content_line.trim_start()[3..].to_string();
+                            let code_lang = content_line.trim_start()[3..].to_string();
                             // 代码块开始标记
                             lines.push(Line::from(vec![
                                 Span::styled(
@@ -368,4 +367,142 @@ pub fn render_input(f: &mut Frame, app: &App, area: Rect) {
     if app.command_hints.visible && hints_area.height > 0 {
         app.command_hints.render(f, hints_area, &ModernTheme::dark_professional());
     }
+}
+
+/// 渲染代码修改确认对话
+pub fn render_modification_confirmation(f: &mut Frame, app: &App, area: Rect) {
+    if !app.modification_confirmation_pending || app.pending_modifications.is_empty() {
+        return;
+    }
+
+    // 创建确认对话的背景
+    let dialog_width = (area.width as f32 * 0.8) as u16;
+    let dialog_height = (area.height as f32 * 0.7) as u16;
+    let dialog_x = (area.width - dialog_width) / 2;
+    let dialog_y = (area.height - dialog_height) / 2;
+    
+    let dialog_area = Rect {
+        x: area.x + dialog_x,
+        y: area.y + dialog_y,
+        width: dialog_width,
+        height: dialog_height,
+    };
+
+    // 获取当前修改
+    let (op, diff_opt) = &app.pending_modifications[app.modification_selected_index];
+    
+    let mut lines = vec![];
+    
+    // 标题
+    lines.push(Line::from(vec![
+        Span::styled(
+            "⏳ 代码修改确认",
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    lines.push(Line::from(""));
+
+    // 操作类型和文件路径
+    match op {
+        crate::ai::code_modification::CodeModificationOp::Create { path, .. } => {
+            lines.push(Line::from(vec![
+                Span::styled("操作: ", Style::default().fg(Color::Cyan)),
+                Span::raw("创建文件"),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("路径: ", Style::default().fg(Color::Cyan)),
+                Span::raw(path),
+            ]));
+        }
+        crate::ai::code_modification::CodeModificationOp::Modify { path, .. } => {
+            lines.push(Line::from(vec![
+                Span::styled("操作: ", Style::default().fg(Color::Cyan)),
+                Span::raw("修改文件"),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("路径: ", Style::default().fg(Color::Cyan)),
+                Span::raw(path),
+            ]));
+        }
+        crate::ai::code_modification::CodeModificationOp::Delete { path } => {
+            lines.push(Line::from(vec![
+                Span::styled("操作: ", Style::default().fg(Color::Red)),
+                Span::raw("删除文件"),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("路径: ", Style::default().fg(Color::Cyan)),
+                Span::raw(path),
+            ]));
+        }
+    }
+
+    lines.push(Line::from(""));
+
+    // 显示 Diff（如果有）
+    if let Some(diff) = diff_opt {
+        lines.push(Line::from(vec![
+            Span::styled("Diff 对比:", Style::default().fg(Color::Magenta)),
+        ]));
+        
+        let old_lines: Vec<&str> = diff.old_content.lines().collect();
+        let new_lines: Vec<&str> = diff.new_content.lines().collect();
+        let max_lines = old_lines.len().max(new_lines.len()).min(5); // 最多显示 5 行
+        
+        for i in 0..max_lines {
+            if i < old_lines.len() {
+                lines.push(Line::from(vec![
+                    Span::styled("- ", Style::default().fg(Color::Red)),
+                    Span::raw(old_lines[i]),
+                ]));
+            }
+            if i < new_lines.len() {
+                lines.push(Line::from(vec![
+                    Span::styled("+ ", Style::default().fg(Color::Green)),
+                    Span::raw(new_lines[i]),
+                ]));
+            }
+        }
+        
+        if max_lines < old_lines.len().max(new_lines.len()) {
+            lines.push(Line::from(vec![
+                Span::styled("... (更多内容)", Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+    }
+
+    lines.push(Line::from(""));
+
+    // 确认/取消选项
+    let confirm_style = if app.modification_choice == crate::app::ModificationChoice::Confirm {
+        Style::default().fg(Color::Black).bg(Color::Green)
+    } else {
+        Style::default().fg(Color::Green)
+    };
+    
+    let cancel_style = if app.modification_choice == crate::app::ModificationChoice::Cancel {
+        Style::default().fg(Color::Black).bg(Color::Red)
+    } else {
+        Style::default().fg(Color::Red)
+    };
+
+    lines.push(Line::from(vec![
+        Span::styled("▶ 确认 (Confirm)", confirm_style),
+        Span::raw("  "),
+        Span::styled("取消 (Cancel)", cancel_style),
+    ]));
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("按 ↑/↓ 切换选择，Enter 确认，Esc 取消", Style::default().fg(Color::DarkGray)),
+    ]));
+
+    // 创建对话框
+    let dialog = Paragraph::new(lines)
+        .block(Block::default()
+            .borders(Borders::ALL)
+            .border_type(ratatui::widgets::BorderType::Rounded)
+            .style(Style::default().fg(Color::Cyan)))
+        .wrap(Wrap { trim: true });
+
+    f.render_widget(dialog, dialog_area);
 }
