@@ -66,7 +66,7 @@ async fn run_app<B: ratatui::backend::Backend>(
     app: &mut App,
 ) -> io::Result<()> {
     loop {
-        terminal.draw(|f| ui::chat::render_chat(f, app))?;
+        terminal.draw(|f| ui::render_modern_ui(f, app))?;
 
         if crossterm::event::poll(std::time::Duration::from_millis(50))? {
             if let Event::Key(key) = crossterm::event::read()? {

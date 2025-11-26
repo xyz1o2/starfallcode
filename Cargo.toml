@@ -18,3 +18,4 @@ tree-sitter-python = "0.20"
 ignore = "0.4"
 dotenv = "0.15"
 anyhow = "1.0"
+chrono = { version = "0.4.42", features = ["serde"] }
