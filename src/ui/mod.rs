@@ -132,7 +132,14 @@ pub fn render_history(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from("  • Enable YOLO mode for quick operations"));
         lines.push(Line::from(""));
     } else {
-        for msg in app.chat_history.get_messages() {
+        let messages = app.chat_history.get_messages();
+        let start_idx = if app.chat_scroll_offset < messages.len() {
+            messages.len() - app.chat_scroll_offset - 1
+        } else {
+            0
+        };
+        
+        for msg in messages.iter().skip(start_idx) {
             let (prefix, color) = match msg.role {
                 crate::core::message::Role::User => ("👤 You", Color::Blue),
                 crate::core::message::Role::Assistant => ("🤖 AI", Color::Green),
@@ -369,132 +376,96 @@ pub fn render_input(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-/// 渲染代码修改确认对话
-pub fn render_modification_confirmation(f: &mut Frame, app: &App, area: Rect) {
+/// 渲染独立的确认对话层（不在聊天历史中）
+pub fn render_confirmation_dialog(f: &mut Frame, app: &App, area: Rect) {
     if !app.modification_confirmation_pending || app.pending_modifications.is_empty() {
         return;
     }
 
-    // 创建确认对话的背景
-    let dialog_width = (area.width as f32 * 0.8) as u16;
-    let dialog_height = (area.height as f32 * 0.7) as u16;
-    let dialog_x = (area.width - dialog_width) / 2;
-    let dialog_y = (area.height - dialog_height) / 2;
+    let (op, _diff_opt) = &app.pending_modifications[app.modification_selected_index];
     
-    let dialog_area = Rect {
-        x: area.x + dialog_x,
-        y: area.y + dialog_y,
-        width: dialog_width,
-        height: dialog_height,
+    // 获取操作信息
+    let (op_name, path) = match op {
+        crate::ai::code_modification::CodeModificationOp::Create { path, .. } => ("创建", path.clone()),
+        crate::ai::code_modification::CodeModificationOp::Modify { path, .. } => ("修改", path.clone()),
+        crate::ai::code_modification::CodeModificationOp::Delete { path } => ("删除", path.clone()),
     };
 
-    // 获取当前修改
-    let (op, diff_opt) = &app.pending_modifications[app.modification_selected_index];
-    
     let mut lines = vec![];
     
     // 标题
     lines.push(Line::from(vec![
         Span::styled(
-            "⏳ 代码修改确认",
+            format!("⏳ {}文件", op_name),
             Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
         ),
     ]));
+    
+    // 文件路径
+    lines.push(Line::from(vec![
+        Span::raw("   "),
+        Span::styled(path, Style::default().fg(Color::Cyan)),
+    ]));
+    
     lines.push(Line::from(""));
-
-    // 操作类型和文件路径
-    match op {
-        crate::ai::code_modification::CodeModificationOp::Create { path, .. } => {
-            lines.push(Line::from(vec![
-                Span::styled("操作: ", Style::default().fg(Color::Cyan)),
-                Span::raw("创建文件"),
-            ]));
-            lines.push(Line::from(vec![
-                Span::styled("路径: ", Style::default().fg(Color::Cyan)),
-                Span::raw(path),
-            ]));
-        }
-        crate::ai::code_modification::CodeModificationOp::Modify { path, .. } => {
-            lines.push(Line::from(vec![
-                Span::styled("操作: ", Style::default().fg(Color::Cyan)),
-                Span::raw("修改文件"),
-            ]));
-            lines.push(Line::from(vec![
-                Span::styled("路径: ", Style::default().fg(Color::Cyan)),
-                Span::raw(path),
-            ]));
-        }
-        crate::ai::code_modification::CodeModificationOp::Delete { path } => {
-            lines.push(Line::from(vec![
-                Span::styled("操作: ", Style::default().fg(Color::Red)),
-                Span::raw("删除文件"),
-            ]));
-            lines.push(Line::from(vec![
-                Span::styled("路径: ", Style::default().fg(Color::Cyan)),
-                Span::raw(path),
-            ]));
-        }
-    }
-
-    lines.push(Line::from(""));
-
-    // 显示 Diff（如果有）
-    if let Some(diff) = diff_opt {
-        lines.push(Line::from(vec![
-            Span::styled("Diff 对比:", Style::default().fg(Color::Magenta)),
-        ]));
-        
-        let old_lines: Vec<&str> = diff.old_content.lines().collect();
-        let new_lines: Vec<&str> = diff.new_content.lines().collect();
-        let max_lines = old_lines.len().max(new_lines.len()).min(5); // 最多显示 5 行
-        
-        for i in 0..max_lines {
-            if i < old_lines.len() {
-                lines.push(Line::from(vec![
-                    Span::styled("- ", Style::default().fg(Color::Red)),
-                    Span::raw(old_lines[i]),
-                ]));
-            }
-            if i < new_lines.len() {
-                lines.push(Line::from(vec![
-                    Span::styled("+ ", Style::default().fg(Color::Green)),
-                    Span::raw(new_lines[i]),
-                ]));
-            }
-        }
-        
-        if max_lines < old_lines.len().max(new_lines.len()) {
-            lines.push(Line::from(vec![
-                Span::styled("... (更多内容)", Style::default().fg(Color::DarkGray)),
-            ]));
-        }
-    }
-
-    lines.push(Line::from(""));
-
-    // 确认/取消选项
+    
+    // 选项列表 - 根据选择状态动态改变颜色
     let confirm_style = if app.modification_choice == crate::app::ModificationChoice::Confirm {
-        Style::default().fg(Color::Black).bg(Color::Green)
+        Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::Green)
     };
     
     let cancel_style = if app.modification_choice == crate::app::ModificationChoice::Cancel {
-        Style::default().fg(Color::Black).bg(Color::Red)
+        Style::default().fg(Color::Black).bg(Color::Red).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::Red)
     };
-
-    lines.push(Line::from(vec![
-        Span::styled("▶ 确认 (Confirm)", confirm_style),
-        Span::raw("  "),
-        Span::styled("取消 (Cancel)", cancel_style),
-    ]));
-
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::styled("按 ↑/↓ 切换选择，Enter 确认，Esc 取消", Style::default().fg(Color::DarkGray)),
-    ]));
+    
+    let abandon_style = if app.modification_choice == crate::app::ModificationChoice::Abandon {
+        Style::default().fg(Color::Black).bg(Color::Gray).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Gray)
+    };
+    
+    // 确认选项
+    if app.modification_choice == crate::app::ModificationChoice::Confirm {
+        lines.push(Line::from(vec![
+            Span::styled("● ", confirm_style),
+            Span::styled("1. 确认 (Y)", confirm_style),
+        ]));
+    } else {
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled("1. 确认 (Y)", Style::default().fg(Color::Green)),
+        ]));
+    }
+    
+    // 取消选项
+    if app.modification_choice == crate::app::ModificationChoice::Cancel {
+        lines.push(Line::from(vec![
+            Span::styled("● ", cancel_style),
+            Span::styled("2. 取消 (N)", cancel_style),
+        ]));
+    } else {
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled("2. 取消 (N)", Style::default().fg(Color::Red)),
+        ]));
+    }
+    
+    // 放弃选项
+    if app.modification_choice == crate::app::ModificationChoice::Abandon {
+        lines.push(Line::from(vec![
+            Span::styled("● ", abandon_style),
+            Span::styled("3. 放弃 (Esc)", abandon_style),
+        ]));
+    } else {
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled("3. 放弃 (Esc)", Style::default().fg(Color::Gray)),
+        ]));
+    }
 
     // 创建对话框
     let dialog = Paragraph::new(lines)
@@ -504,5 +475,5 @@ pub fn render_modification_confirmation(f: &mut Frame, app: &App, area: Rect) {
             .style(Style::default().fg(Color::Cyan)))
         .wrap(Wrap { trim: true });
 
-    f.render_widget(dialog, dialog_area);
+    f.render_widget(dialog, area);
 }

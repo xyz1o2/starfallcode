@@ -37,16 +37,17 @@ fn format_diff(old: &str, new: &str) -> String {
 #[derive(Debug, PartialEq)]
 pub enum AppAction {
     None,
-    Quit,
     SubmitChat,
+    Quit,
 }
 
 /// 代码修改确认选择
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ModificationChoice {
-    Confirm,
-    Cancel,
-}
+    pub enum ModificationChoice {
+        Confirm,  // 1. 确认
+        Cancel,   // 2. 取消
+        Abandon,  // 3. 放弃
+    }
 
 pub struct App {
     pub should_quit: bool,
@@ -65,6 +66,14 @@ pub struct App {
     pub modification_confirmation_pending: bool,
     pub modification_selected_index: usize,
     pub modification_choice: ModificationChoice,
+    
+    // 聊天历史滚动
+    pub chat_scroll_offset: usize,
+    
+    // 鼠标选择
+    pub selected_text: String,
+    pub selection_start: Option<(u16, u16)>,
+    pub selection_end: Option<(u16, u16)>,
 }
 
 impl App {
@@ -84,6 +93,10 @@ impl App {
             modification_confirmation_pending: false,
             modification_selected_index: 0,
             modification_choice: ModificationChoice::Confirm,
+            chat_scroll_offset: 0,
+            selected_text: String::new(),
+            selection_start: None,
+            selection_end: None,
         }
     }
 
@@ -228,6 +241,8 @@ impl App {
             self.modification_confirmation_pending = true;
             self.modification_selected_index = 0;
             self.modification_choice = ModificationChoice::Confirm;
+            
+            // 确认对话现在作为独立的 UI 层显示，不添加到聊天历史
         }
     }
 
@@ -272,22 +287,36 @@ impl App {
     }
 
         pub fn render(&self, f: &mut Frame) {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3), // Header
-                Constraint::Min(10),   // Chat history (flexible, takes remaining space)
-                Constraint::Length(if self.command_hints.visible { 10 } else { 4 }), // Input area (max 10 with hints)
-            ])
-            .split(f.size());
+        // 如果有待确认的修改，使用不同的布局
+        if self.modification_confirmation_pending && !self.pending_modifications.is_empty() {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3),      // Header
+                    Constraint::Min(5),         // Chat history (smaller)
+                    Constraint::Length(8),      // Confirmation dialog
+                    Constraint::Length(4),      // Input area
+                ])
+                .split(f.size());
 
-        ui::render_header(f, self, chunks[0]);
-        ui::render_history(f, self, chunks[1]);
-        ui::render_input(f, self, chunks[2]);
-        
-        // 如果有待确认的修改，显示确认对话
-        if self.modification_confirmation_pending {
-            ui::render_modification_confirmation(f, self, f.size());
+            ui::render_header(f, self, chunks[0]);
+            ui::render_history(f, self, chunks[1]);
+            ui::render_confirmation_dialog(f, self, chunks[2]); // 独立的确认对话层
+            ui::render_input(f, self, chunks[3]);
+        } else {
+            // 正常布局
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3), // Header
+                    Constraint::Min(10),   // Chat history (flexible, takes remaining space)
+                    Constraint::Length(if self.command_hints.visible { 10 } else { 4 }), // Input area (max 10 with hints)
+                ])
+                .split(f.size());
+
+            ui::render_header(f, self, chunks[0]);
+            ui::render_history(f, self, chunks[1]);
+            ui::render_input(f, self, chunks[2]);
         }
     }
 

@@ -24,6 +24,10 @@ impl ChatHistory {
     pub fn get_messages(&self) -> &VecDeque<Message> {
         &self.messages
     }
+    
+    pub fn get_messages_mut(&mut self) -> &mut VecDeque<Message> {
+        &mut self.messages
+    }
 
     pub fn clear(&mut self) {
         self.messages.clear();
