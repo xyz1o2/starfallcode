@@ -72,6 +72,9 @@ pub struct App {
     pub chat_scroll_offset: usize,
     pub scrollbar_state: ScrollbarState,
     
+    // 输入框滚动
+    pub input_scroll_offset: usize,
+    
     // 鼠标选择
     pub selected_text: String,
     pub selection_start: Option<(u16, u16)>,
@@ -103,6 +106,7 @@ impl App {
             modification_choice: ModificationChoice::Confirm,
             chat_scroll_offset: 0,
             scrollbar_state: ScrollbarState::default(),
+            input_scroll_offset: 0,
             selected_text: String::new(),
             selection_start: None,
             selection_end: None,

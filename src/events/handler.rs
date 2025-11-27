@@ -25,7 +25,8 @@ impl EventHandler {
             }
             MouseEventKind::ScrollUp => {
                 // 鼠标滚轮向上 - 向上滚动聊天历史（看更早的消息）
-                if app.chat_scroll_offset < app.chat_history.get_messages().len().saturating_sub(1) {
+                let max_scroll = app.chat_history.get_messages().len().saturating_sub(1);
+                if app.chat_scroll_offset < max_scroll {
                     app.chat_scroll_offset += 1;
                 }
                 AppAction::None
@@ -362,6 +363,15 @@ impl EventHandler {
             KeyCode::Backspace => {
                 app.input_text.pop();
                 
+                // 自动调整输入框滚动位置（退格后）
+                let total_lines = app.input_text.lines().count();
+                let visible_lines = 3; // 输入框可见行数
+                if total_lines > visible_lines {
+                    app.input_scroll_offset = total_lines.saturating_sub(visible_lines);
+                } else {
+                    app.input_scroll_offset = 0;
+                }
+                
                 // 如果提及建议可见，更新或关闭
                 if app.mention_suggestions.visible {
                     if app.input_text.contains('@') {
@@ -385,8 +395,15 @@ impl EventHandler {
                 if app.mention_suggestions.visible {
                     app.file_search.select_previous();
                     app.mention_suggestions.selected_index = app.file_search.selected_index;
+                } else if key.modifiers == KeyModifiers::CONTROL {
+                    // Ctrl+Up: 向上滚动输入框
+                    if app.input_scroll_offset > 0 {
+                        app.input_scroll_offset -= 1;
+                    }
                 } else {
-                    if app.chat_scroll_offset < app.chat_history.get_messages().len().saturating_sub(1) {
+                    // 向上滚动：增加偏移量以查看更早的消息
+                    let max_scroll = app.chat_history.get_messages().len().saturating_sub(1);
+                    if app.chat_scroll_offset < max_scroll {
                         app.chat_scroll_offset += 1;
                     }
                 }
@@ -397,7 +414,16 @@ impl EventHandler {
                 if app.mention_suggestions.visible {
                     app.file_search.select_next();
                     app.mention_suggestions.selected_index = app.file_search.selected_index;
+                } else if key.modifiers == KeyModifiers::CONTROL {
+                    // Ctrl+Down: 向下滚动输入框
+                    let total_lines = app.input_text.lines().count();
+                    let visible_lines = 3; // 输入框可见行数
+                    let max_scroll = total_lines.saturating_sub(visible_lines);
+                    if app.input_scroll_offset < max_scroll {
+                        app.input_scroll_offset += 1;
+                    }
                 } else {
+                    // 向下滚动：减少偏移量以查看更新的消息
                     if app.chat_scroll_offset > 0 {
                         app.chat_scroll_offset -= 1;
                     }
@@ -406,6 +432,15 @@ impl EventHandler {
             }
             KeyCode::Char(c) => {
                 app.input_text.push(c);
+
+                // 自动调整输入框滚动位置
+                let total_lines = app.input_text.lines().count();
+                let visible_lines = 3; // 输入框可见行数
+                if total_lines > visible_lines {
+                    app.input_scroll_offset = total_lines.saturating_sub(visible_lines);
+                } else {
+                    app.input_scroll_offset = 0;
+                }
 
                 // 检查最后一个 '@' 之后是否有空格
                 if let Some(at_pos) = app.input_text.rfind('@') {

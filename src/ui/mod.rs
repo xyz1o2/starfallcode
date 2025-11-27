@@ -29,6 +29,12 @@ pub fn render_header(f: &mut Frame, app: &App, area: Rect) {
         .map(|c| c.provider.to_string())
         .unwrap_or_default();
     
+    let scroll_info = if app.chat_scroll_offset > 0 {
+        format!(" | Scroll: {}↑", app.chat_scroll_offset)
+    } else {
+        String::new()
+    };
+    
     let header_text = vec![
         Line::from(vec![
             Span::styled(
@@ -48,6 +54,10 @@ pub fn render_header(f: &mut Frame, app: &App, area: Rect) {
             Span::styled(
                 provider_str.as_str(),
                 Style::default().fg(Color::Green),
+            ),
+            Span::styled(
+                scroll_info.as_str(),
+                Style::default().fg(Color::Magenta),
             ),
         ]),
         Line::from(vec![
@@ -134,12 +144,24 @@ pub fn render_history(f: &mut Frame, app: &mut App, area: Rect) {
         lines.push(Line::from(""));
     } else {
         let messages = app.chat_history.get_messages();
-        let start_idx = if app.chat_scroll_offset < messages.len() {
-            messages.len() - app.chat_scroll_offset - 1
-        } else {
-            0
-        };
         
+        // 修复滚动逻辑：我们希望实现"反向"滚动效果
+        // chat_scroll_offset = 0: 显示最新的消息（正常状态）
+        // chat_scroll_offset = 1: 向上滚动1条，显示倒数第2条及之前的消息
+        // chat_scroll_offset = N: 向上滚动N条，显示更早的消息
+        
+        let total_messages = messages.len();
+        if total_messages == 0 {
+            // 没有消息时直接返回
+            return;
+        }
+        
+        // 计算要显示的消息范围
+        // 从后往前计算：跳过最后 chat_scroll_offset 条消息
+        let skip_from_end = app.chat_scroll_offset.min(total_messages);
+        let start_idx = total_messages.saturating_sub(skip_from_end);
+        
+        // 显示从 start_idx 到末尾的消息（即更早的消息）
         for msg in messages.iter().skip(start_idx) {
             let (prefix, color) = match msg.role {
                 crate::core::message::Role::User => ("👤 You", Color::Blue),
@@ -304,9 +326,12 @@ pub fn render_history(f: &mut Frame, app: &mut App, area: Rect) {
 
     // 更新 scrollbar_state
     let total_lines = lines.len();
+    let visible_lines = (area.height as usize).saturating_sub(4); // 减去边框和标题占用的行数
+    let max_scroll = total_lines.saturating_sub(visible_lines);
+    
     app.scrollbar_state = app.scrollbar_state
         .content_length(total_lines)
-        .position(app.chat_scroll_offset);
+        .position(app.chat_scroll_offset.min(max_scroll));
 
     let history = Paragraph::new(lines)
         .wrap(Wrap { trim: true })
@@ -370,8 +395,16 @@ pub fn render_input(f: &mut Frame, app: &mut App, area: Rect) {
     )));
     f.render_widget(hint_line, input_chunks[0]);
 
-    let input_widget = Paragraph::new(app.input_text.as_str())
-        .block(Block::default().borders(Borders::ALL).title(" 💬 Input ").style(Style::default().fg(Color::Cyan)));
+    // 将输入文本分割成多行，支持滚动
+    let input_lines: Vec<Line> = app.input_text
+        .lines()
+        .skip(app.input_scroll_offset)
+        .map(|line| Line::from(line.to_string()))
+        .collect();
+    
+    let input_widget = Paragraph::new(input_lines)
+        .block(Block::default().borders(Borders::ALL).title(" 💬 Input ").style(Style::default().fg(Color::Cyan)))
+        .wrap(Wrap { trim: true });
     f.render_widget(input_widget, input_chunks[1]);
 
     // 光标位置：使用 unicode-width 计算准确的显示宽度
