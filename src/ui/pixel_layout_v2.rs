@@ -22,15 +22,34 @@ pub struct PixelData {
     pub map: [u8; 64], // 8x8 = 64 像素（与 examples/v2.html 一致）
 }
 
-/// 更紧凑的头像：将 8x8 采样为 6x6，然后使用半块字符压缩为 6×3。
+/// 紧凑头像 + 侧边有色边框（无顶底边），列宽 = 5 像素 + 2 边框 = 7。
+fn render_avatar_compact_boxed(avatar_data: &PixelData, border: Color) -> Vec<Line<'static>> {
+    let inner = render_avatar_compact(avatar_data);
+    let mut out: Vec<Line<'static>> = Vec::with_capacity(inner.len() + 2);
+    let b = Style::default().bg(border);
+    // 顶部边框（5像素 + 左右各1 = 7 列）
+    out.push(Line::from(Span::styled(" ".repeat(7), b)));
+    for line in inner.into_iter() {
+        let mut spans = Vec::with_capacity(line.spans.len() + 2);
+        spans.push(Span::styled(" ", b));
+        spans.extend(line.spans);
+        spans.push(Span::styled(" ", b));
+        out.push(Line::from(spans));
+    }
+    // 底部边框
+    out.push(Line::from(Span::styled(" ".repeat(7), b)));
+    out
+}
+
+/// 更紧凑的头像：将 8x8 采样为 5x5，然后使用半块字符压缩为 5×3。
 fn render_avatar_compact(avatar_data: &PixelData) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let black = Color::Rgb(0, 0, 0);
 
-    // 采样函数：将目标 [0..6) 映射到源 [0..8)
+    // 采样函数：将目标 [0..5) 映射到源 [0..8)
     let sample = |r_t: usize, c_t: usize| -> u8 {
-        let sr = (((r_t * 8) + 3) / 6).min(7);
-        let sc = (((c_t * 8) + 3) / 6).min(7);
+        let sr = (((r_t * 8) + 2) / 5).min(7);
+        let sc = (((c_t * 8) + 2) / 5).min(7);
         avatar_data.map[sr * 8 + sc]
     };
     let to_color = |v: u8| match v {
@@ -39,9 +58,9 @@ fn render_avatar_compact(avatar_data: &PixelData) -> Vec<Line<'static>> {
         _ => black,
     };
 
-    for tr in (0..6).step_by(2) {
+    for tr in (0..5).step_by(2) {
         let mut spans: Vec<Span<'static>> = Vec::new();
-        for tc in 0..6 {
+        for tc in 0..5 {
             let top = sample(tr, tc);
             let bottom = sample(tr + 1, tc);
             spans.push(Span::styled(
@@ -300,8 +319,8 @@ fn render_history_with_avatars(f: &mut Frame, app: &App, area: Rect, theme: &The
         };
 
         // 头像像素图（与 v2.html 一致）
-        let avatar_map: [u8; 64] = match msg.role {
-            AppRole::User => [
+        let (avatar_map, pixel_color): ([u8; 64], Color) = match msg.role {
+            AppRole::User => ([
                 0,0,1,1,1,1,0,0,
                 0,1,1,1,1,1,1,0,
                 1,1,2,1,1,2,1,1,
@@ -310,8 +329,8 @@ fn render_history_with_avatars(f: &mut Frame, app: &App, area: Rect, theme: &The
                 0,1,1,1,1,1,1,0,
                 0,0,1,0,0,1,0,0,
                 0,0,1,1,1,1,0,0,
-            ],
-            AppRole::Assistant => [
+            ], theme.accent_user),
+            AppRole::Assistant => ([
                 0,0,1,1,1,1,0,0,
                 0,1,1,1,1,1,1,0,
                 1,1,1,1,1,1,1,1,
@@ -320,8 +339,8 @@ fn render_history_with_avatars(f: &mut Frame, app: &App, area: Rect, theme: &The
                 1,1,1,1,1,0,0,0,
                 0,1,1,1,1,1,1,0,
                 0,0,1,1,1,1,0,0,
-            ],
-            AppRole::System => [
+            ], Color::Rgb(250, 204, 21)), // pac 黄
+            AppRole::System => ([
                 0,0,1,1,1,1,0,0,
                 0,1,1,1,1,1,1,0,
                 1,1,2,1,1,2,1,1,
@@ -330,24 +349,28 @@ fn render_history_with_avatars(f: &mut Frame, app: &App, area: Rect, theme: &The
                 1,0,0,0,0,0,0,1,
                 0,1,1,0,0,1,1,0,
                 0,0,1,1,1,1,0,0,
-            ],
+            ], theme.accent_ai),
         };
-        let avatar_data = PixelData { color: role_color, map: avatar_map };
+        let avatar_data = PixelData { color: pixel_color, map: avatar_map };
 
-        // 渲染内容：角色标签单独一行（匹配 v2.html）
+        // 渲染内容：角色标签单独一行（匹配 v2.html，添加 $ 前缀）
         let mut content_lines: Vec<Line> = Vec::new();
-        content_lines.push(Line::from(Span::styled(
-            role_label,
-            Style::default()
-                .fg(role_color)
-                .add_modifier(Modifier::BOLD),
-        )));
+        content_lines.push(Line::from(vec![
+            Span::styled("$", Style::default().fg(Color::Rgb(136, 136, 136))),
+            Span::raw(" "),
+            Span::styled(
+                role_label,
+                Style::default()
+                    .fg(role_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
         for line in msg.content.lines() {
             content_lines.push(Line::from(line));
         }
 
-        // 重新计算消息高度：紧凑头像 3 行 与 内容行数取最大
-        let msg_height = 3u16.max(content_lines.len() as u16);
+        // 重新计算消息高度：紧凑盒子头像 5 行 与 内容行数取最大
+        let msg_height = 5u16.max(content_lines.len() as u16);
         // 更新内容区域高度（通过重建 msg_area/h_layout）
         let msg_area = Rect {
             x: area.x,
@@ -357,18 +380,23 @@ fn render_history_with_avatars(f: &mut Frame, app: &App, area: Rect, theme: &The
         };
         let h_layout = Layout::default()
             .direction(Direction::Horizontal)
-            // 头像列 7：6 列像素 + 1 列间隙
-            .constraints([Constraint::Length(7), Constraint::Min(10)])
+            // 头像列 8：5 像素 + 2 边框 + 1 间隙
+            .constraints([Constraint::Length(8), Constraint::Min(10)])
             .split(msg_area);
 
-        // 渲染头像（更紧凑半块）
-        let avatar_lines = render_avatar_compact(&avatar_data);
+        // 渲染头像（紧凑 + 角色主题边框，贴近 v2.html）
+        let border_color = match msg.role {
+            AppRole::User => theme.accent_user,
+            AppRole::Assistant => theme.accent_ai,
+            AppRole::System => theme.accent_ai,
+        };
+        let avatar_lines = render_avatar_compact_boxed(&avatar_data, border_color);
         f.render_widget(Paragraph::new(avatar_lines), h_layout[0]);
 
         let content_para = Paragraph::new(content_lines).wrap(Wrap { trim: true });
         f.render_widget(content_para, h_layout[1]);
 
-        y_offset = y_offset.saturating_add(msg_height + 1); // +1 消息间隔
+        y_offset = y_offset.saturating_add(msg_height + 2); // +2 留白更接近 v2.html
     }
 }
 
@@ -463,7 +491,7 @@ fn render_input_area(f: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         ],
     };
 
-    let avatar_lines = render_avatar_compact(&user_avatar);
+    let avatar_lines = render_avatar_compact_boxed(&user_avatar, theme.accent_user);
     f.render_widget(Paragraph::new(avatar_lines), chunks[0]);
 
     // 2. 渲染箭头
@@ -477,10 +505,17 @@ fn render_input_area(f: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         chunks[1],
     );
 
-    // 3. 渲染输入框
-    let input_para = Paragraph::new(app.input_text.as_str())
-        .style(Style::default().fg(Color::White));
-    f.render_widget(input_para, chunks[2]);
+    // 3. 渲染输入框（空时显示 placeholder）
+    let input_widget = if app.input_text.is_empty() {
+        let placeholder = Line::from(Span::styled(
+            "Type 'add', 'del', 'fix' or chat...",
+            Style::default().fg(Color::Rgb(120, 120, 120)),
+        ));
+        Paragraph::new(vec![placeholder]).style(Style::default().fg(Color::White))
+    } else {
+        Paragraph::new(app.input_text.as_str()).style(Style::default().fg(Color::White))
+    };
+    f.render_widget(input_widget, chunks[2]);
 
     // 4. 显示光标（使用字符数而不是字节数）
     let cursor_pos = app.input_text.chars().count() as u16;
