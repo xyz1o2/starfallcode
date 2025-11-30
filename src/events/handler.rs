@@ -1,5 +1,5 @@
 use crate::app::{App, AppAction, ModificationChoice};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
 
 fn estimate_chat_lines(app: &App) -> usize {
     let mut total = 0;
@@ -381,6 +381,7 @@ impl EventHandler {
                         // 保留 @ 符号，添加文件路径和空格
                         app.input_text.push_str(&selected);
                         app.input_text.push(' '); // 添加空格，这样后续输入不会立即触发搜索
+                        app.input_cursor = app.input_text.len(); // Move cursor to end
                         app.mention_suggestions.close();
                         app.file_search.clear();
                     }
@@ -390,7 +391,29 @@ impl EventHandler {
                 }
             }
             KeyCode::Backspace => {
-                app.input_text.pop();
+                if app.input_cursor > 0 {
+                    // 删除光标前的字符
+                    let char_count = app.input_text.chars().count();
+                    let delete_char_index = app.input_cursor.saturating_sub(1);
+                    
+                    // 获取要删除的字符的字节位置
+                    if let Some(byte_pos) = app.input_text
+                        .char_indices()
+                        .map(|(i, _)| i)
+                        .nth(delete_char_index)
+                    {
+                        // 找到下一个字符的字节位置（用于确定删除范围）
+                        let next_byte_pos = app.input_text
+                            .char_indices()
+                            .map(|(i, _)| i)
+                            .nth(delete_char_index + 1)
+                            .unwrap_or(app.input_text.len());
+                        
+                        // 删除该字符
+                        app.input_text.drain(byte_pos..next_byte_pos);
+                        app.input_cursor = delete_char_index;
+                    }
+                }
                 
                 // 自动调整输入框滚动位置（退格后）
                 let total_lines = app.input_text.lines().count();
@@ -467,15 +490,29 @@ impl EventHandler {
                 }
                 AppAction::None
             }
-            KeyCode::PageDown => {
-                // 向下翻页
-                if app.chat_scroll_offset > 0 {
-                    app.chat_scroll_offset = app.chat_scroll_offset.saturating_sub(10);
-                }
+            KeyCode::Left => {
+                // 使用字符索引移动光标
+                app.input_cursor = app.input_cursor.saturating_sub(1);
                 AppAction::None
             }
-            KeyCode::Char(c) => {
-                app.input_text.push(c);
+            KeyCode::Right => {
+                // 使用字符索引移动光标
+                let char_count = app.input_text.chars().count();
+                app.input_cursor = (app.input_cursor + 1).min(char_count);
+                AppAction::None
+            }
+            KeyCode::Char(c) if key.kind == KeyEventKind::Press => {
+                // 只在按键按下时处理（过滤 IME 组合事件）
+                // 将字符索引转换为字节索引，然后插入字符
+                let char_count = app.input_text.chars().count();
+                let byte_index = app.input_text
+                    .char_indices()
+                    .map(|(i, _)| i)
+                    .nth(app.input_cursor.min(char_count))
+                    .unwrap_or(app.input_text.len());
+                
+                app.input_text.insert(byte_index, c);
+                app.input_cursor = (app.input_cursor + 1).min(char_count + 1);
 
                 // 自动调整输入框滚动位置
                 let total_lines = app.input_text.lines().count();
@@ -516,3 +553,8 @@ impl EventHandler {
         }
     }
 }
+
+
+
+
+

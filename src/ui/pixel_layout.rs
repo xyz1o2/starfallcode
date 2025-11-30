@@ -255,17 +255,47 @@ fn render_input_area(f: &mut Frame, app: &App, area: Rect) {
 
     // 2. 渲染输入框
     let pulse_char = if (app.frame_count / 15) % 2 == 0 { "▶" } else { "▸" };
+    
+    // 计算输入框可用宽度（需要留出脉冲字符和空格的空间）
+    let available_width = chunks[1].width.saturating_sub(2) as usize;
+    
+    let input_text = &app.input_text;
+    let char_count = input_text.chars().count();
+    
+    // 计算显示的文本（支持水平滚动）
+    // 当文本超过宽度时，从末尾向前显示，保证光标始终可见
+    let (display_text, display_start_pos) = if char_count > available_width {
+        // 显示最后 available_width 个字符
+        let start_pos = char_count.saturating_sub(available_width);
+        let text = input_text.chars().skip(start_pos).collect::<String>();
+        (text, start_pos)
+    } else {
+        (input_text.to_string(), 0)
+    };
+    
     let input_line = Line::from(vec![
         Span::styled(
             pulse_char,
             Style::default().fg(theme.accent_user).add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
-        Span::raw(&app.input_text),
+        Span::raw(display_text.clone()),
     ]);
 
     let input_widget = Paragraph::new(input_line)
         .style(Style::default().fg(Color::White));
 
     f.render_widget(input_widget, chunks[1]);
+
+    // 3. 设置光标位置
+    // 光标始终在文本末尾（最后一个字符后面）
+    // 光标x坐标 = 脉冲字符(1) + 空格(1) + 显示文本的长度
+    let display_char_count = display_text.chars().count() as u16;
+    let cursor_x = chunks[1].x + 2 + display_char_count;
+    let cursor_y = chunks[1].y + (chunks[1].height / 2);
+    
+    // 确保光标在有效范围内
+    if cursor_x <= chunks[1].right() && cursor_y < chunks[1].bottom() {
+        f.set_cursor(cursor_x, cursor_y);
+    }
 }

@@ -313,12 +313,36 @@ impl MainChatArea {
                 ChatAction::ClearHistory
             }
             KeyCode::Char(c) => {
+                // Ensure cursor is at a valid character boundary
+                if self.cursor_position > self.input_text.len() {
+                    self.cursor_position = self.input_text.len();
+                } else if !self.input_text.is_char_boundary(self.cursor_position) {
+                    // Find the nearest valid character boundary
+                    let mut new_cursor = self.cursor_position;
+                    while new_cursor > 0 && !self.input_text.is_char_boundary(new_cursor) {
+                        new_cursor -= 1;
+                    }
+                    self.cursor_position = new_cursor;
+                }
+                
                 self.input_text.insert(self.cursor_position, c);
                 self.cursor_position += 1;
                 ChatAction::None
             }
             KeyCode::Backspace => {
                 if self.cursor_position > 0 {
+                    // Ensure cursor is at a valid character boundary
+                    if self.cursor_position > self.input_text.len() {
+                        self.cursor_position = self.input_text.len();
+                    } else if !self.input_text.is_char_boundary(self.cursor_position) {
+                        // Find the nearest valid character boundary
+                        let mut new_cursor = self.cursor_position;
+                        while new_cursor > 0 && !self.input_text.is_char_boundary(new_cursor) {
+                            new_cursor -= 1;
+                        }
+                        self.cursor_position = new_cursor;
+                    }
+                    
                     self.input_text.remove(self.cursor_position - 1);
                     self.cursor_position -= 1;
                 }
@@ -333,12 +357,30 @@ impl MainChatArea {
             KeyCode::Left => {
                 if self.cursor_position > 0 {
                     self.cursor_position -= 1;
+                    // Ensure cursor is at a valid character boundary
+                    if !self.input_text.is_char_boundary(self.cursor_position) {
+                        // Find the nearest valid character boundary to the left
+                        let mut new_cursor = self.cursor_position;
+                        while new_cursor > 0 && !self.input_text.is_char_boundary(new_cursor) {
+                            new_cursor -= 1;
+                        }
+                        self.cursor_position = new_cursor;
+                    }
                 }
                 ChatAction::None
             }
             KeyCode::Right => {
                 if self.cursor_position < self.input_text.len() {
                     self.cursor_position += 1;
+                    // Ensure cursor is at a valid character boundary
+                    if !self.input_text.is_char_boundary(self.cursor_position) {
+                        // Find the nearest valid character boundary to the right
+                        let mut new_cursor = self.cursor_position;
+                        while new_cursor < self.input_text.len() && !self.input_text.is_char_boundary(new_cursor) {
+                            new_cursor += 1;
+                        }
+                        self.cursor_position = new_cursor;
+                    }
                 }
                 ChatAction::None
             }

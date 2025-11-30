@@ -126,6 +126,7 @@ pub struct App {
     pub should_quit: bool,
     pub chat_history: ChatHistory,
     pub input_text: String,
+    pub input_cursor: usize, // Track cursor position in input text
     pub llm_config: Option<LLMConfig>,
     pub llm_client: Option<Arc<LLMClient>>,
     pub is_streaming: bool,
@@ -173,6 +174,7 @@ impl App {
             should_quit: false,
             chat_history: ChatHistory::new(100),
             input_text: String::new(),
+            input_cursor: 0,
             llm_config: None,
             llm_client: None,
             is_streaming: false,
@@ -225,6 +227,7 @@ impl App {
 
         self.add_user_message(&input);
         self.input_text.clear();
+        self.input_cursor = 0; // Reset cursor position
         self.command_hints.clear();
         self.mention_suggestions.close();
 

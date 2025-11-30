@@ -139,6 +139,9 @@ async fn run_app<B: ratatui::backend::Backend>(
                             streaming_response.append(&t);
                             drop(streaming_response); // 释放锁
                             
+                            // 保持自动滚动到底部
+                            app.scroll_to_bottom();
+                            
                             // 立即触发重新渲染以显示新的 token
                             terminal.draw(|f| app.render(f)).ok();
                         }

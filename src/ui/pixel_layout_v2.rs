@@ -191,55 +191,70 @@ pub fn render_pixel_layout(f: &mut Frame, app: &App) {
 }
 
 
-/// 渲染历史区域（带头像）
+/// 渲染历史区域(带头像)
 fn render_history_with_avatars(f: &mut Frame, app: &App, area: Rect, theme: &Theme) {
     let messages = app.chat_history.get_messages();
-    let mut y_offset = 0u16;
-
-    for msg in messages {
-        if y_offset >= area.height {
-            break;
-        }
-
-        let (_role_label, _role_color) = match msg.role {
+    
+    // 构建所有消息的行内容
+    let mut all_lines: Vec<Line> = Vec::new();
+    let mut line_to_msg_map: Vec<usize> = Vec::new(); // 记录每行属于哪个消息
+    
+    for (msg_idx, msg) in messages.iter().enumerate() {
+        let (_role_label, role_color) = match msg.role {
             AppRole::User => ("USER", theme.accent_user),
             AppRole::Assistant => ("AI", theme.accent_ai),
             AppRole::System => ("SYSTEM", Color::Yellow),
         };
-
-
-        // 渲染内容：直接显示消息内容，不包含角色标签
-        let mut content_lines: Vec<Line> = Vec::new();
-        for line in msg.content.lines() {
-            content_lines.push(Line::from(line));
-        }
-
-        // 计算消息高度：取头像高度(4行)和内容行数的最大值
-        let avatar_height = 4u16;
-        let content_height = content_lines.len() as u16;
-        let msg_height = avatar_height.max(content_height);
-        // 更新内容区域高度（通过重建 msg_area/h_layout）
-        let msg_area = Rect {
-            x: area.x,
-            y: area.y + y_offset,
-            width: area.width,
-            height: msg_height.min(area.height.saturating_sub(y_offset)),
+        
+        // 添加头像行(使用简化的文本表示)
+        let avatar_symbol = match msg.role {
+            AppRole::User => "👤 ",
+            AppRole::Assistant => "🤖 ",
+            AppRole::System => "⚙️  ",
         };
-        let h_layout = Layout::default()
-            .direction(Direction::Horizontal)
-            // 头像列：4像素 × 2空格/像素 = 8 字符宽 + 2 列间隙
-            .constraints([Constraint::Length(10), Constraint::Min(10)])
-            .split(msg_area);
-
-        // 使用 Canvas Widget 渲染头像
-        let avatar_widget = svg_avatar::get_avatar_widget(&msg.role);
-        f.render_widget(avatar_widget, h_layout[0]);
-
-        let content_para = Paragraph::new(content_lines).wrap(Wrap { trim: true });
-        f.render_widget(content_para, h_layout[1]);
-
-        y_offset = y_offset.saturating_add(msg_height + 2); // +2 留白更接近 v2.html
+        
+        all_lines.push(Line::from(Span::styled(
+            avatar_symbol,
+            Style::default().fg(role_color).add_modifier(Modifier::BOLD),
+        )));
+        line_to_msg_map.push(msg_idx);
+        
+        // 添加消息内容
+        for line in msg.content.lines() {
+            all_lines.push(Line::from(format!("  {}", line)));
+            line_to_msg_map.push(msg_idx);
+        }
+        
+        // 消息间空行
+        all_lines.push(Line::from(""));
+        line_to_msg_map.push(msg_idx);
     }
+    
+    // 计算滚动偏移量
+    // chat_scroll_offset = 0 表示显示最新消息(底部对齐)
+    // chat_scroll_offset > 0 表示向上滚动查看历史消息
+    let total_lines = all_lines.len() as u16;
+    let visible_lines = area.height;
+    
+    let scroll_offset = if total_lines <= visible_lines {
+        // 内容少于可见区域,不需要滚动
+        0
+    } else {
+        // 计算从顶部开始的滚动偏移
+        // 当 chat_scroll_offset = 0 时,显示底部(最新消息)
+        // scroll_offset = total_lines - visible_lines
+        // 当向上滚动时,减少 scroll_offset
+        total_lines
+            .saturating_sub(visible_lines)
+            .saturating_sub(app.chat_scroll_offset as u16)
+    };
+    
+    // 使用 Paragraph 的 scroll 方法渲染
+    let paragraph = Paragraph::new(all_lines)
+        .wrap(Wrap { trim: true })
+        .scroll((scroll_offset, 0));
+    
+    f.render_widget(paragraph, area);
 }
 
 /// 渲染历史区域（旧版本，不带头像）
@@ -307,20 +322,17 @@ fn render_status_bar(f: &mut Frame, area: Rect, _theme: &Theme) {
 fn render_input_area(f: &mut Frame, app: &App, area: Rect, theme: &Theme) {
     // 背景
     f.render_widget(Paragraph::new("").style(Style::default().bg(Color::Rgb(8, 8, 8))), area);
-    // 水平分割：头像 | 箭头 | 输入框
+    
+    // 水平分割:箭头 | 输入框
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(10),  // 4像素 × 2空格 = 8字符 + 2间隙
             Constraint::Length(2),   // 箭头
             Constraint::Min(10),     // 输入框
         ])
         .split(area);
-    // 使用 Canvas Widget 渲染用户头像
-    let avatar_widget = svg_avatar::get_avatar_widget(&AppRole::User);
-    f.render_widget(avatar_widget, chunks[0]);
 
-    // 2. 渲染箭头
+    // 1. 渲染箭头
     let arrow = "▶";
     f.render_widget(
         Paragraph::new(arrow).style(
@@ -328,10 +340,10 @@ fn render_input_area(f: &mut Frame, app: &App, area: Rect, theme: &Theme) {
                 .fg(theme.accent_user)
                 .add_modifier(Modifier::BOLD),
         ),
-        chunks[1],
+        chunks[0],
     );
 
-    // 3. 渲染输入框（空时显示 placeholder）
+    // 2. 渲染输入框
     let input_widget = if app.input_text.is_empty() {
         let placeholder = Line::from(Span::styled(
             "Type 'add', 'del', 'fix' or chat...",
@@ -341,12 +353,15 @@ fn render_input_area(f: &mut Frame, app: &App, area: Rect, theme: &Theme) {
     } else {
         Paragraph::new(app.input_text.as_str()).style(Style::default().fg(Color::White))
     };
-    f.render_widget(input_widget, chunks[2]);
+    f.render_widget(input_widget, chunks[1]);
 
-    // 4. 显示光标（使用字符数而不是字节数）
-    let cursor_pos = app.input_text.chars().count() as u16;
+    // 3. 计算并设置光标位置
+    // 光标应该在输入文本的当前光标位置
+    let cursor_col = app.input_cursor as u16;
+    
+    // 设置光标位置 (x = 输入区域起始 + 光标偏移, y = 输入区域起始)
     f.set_cursor(
-        chunks[2].x + cursor_pos,
-        chunks[2].y,
+        chunks[1].x + cursor_col,
+        chunks[1].y,
     );
 }
