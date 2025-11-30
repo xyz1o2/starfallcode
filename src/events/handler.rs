@@ -393,7 +393,6 @@ impl EventHandler {
             KeyCode::Backspace => {
                 if app.input_cursor > 0 {
                     // 删除光标前的字符
-                    let char_count = app.input_text.chars().count();
                     let delete_char_index = app.input_cursor.saturating_sub(1);
                     
                     // 获取要删除的字符的字节位置
