@@ -213,6 +213,8 @@ impl App {
             role: Role::User,
             content: text.to_string(),
         });
+        // 自动滚动到底部
+        self.scroll_to_bottom();
     }
 
     pub async fn handle_chat_submit(&mut self) {
@@ -296,6 +298,7 @@ impl App {
                 role: Role::System,
                 content: result.message.clone(),
             });
+            self.scroll_to_bottom();
             
             // 如果有 Diff 对比，显示它
             if let Some(diff) = result.diff {
@@ -309,6 +312,7 @@ impl App {
                     role: Role::System,
                     content: diff_content,
                 });
+                self.scroll_to_bottom();
             }
             
             return;
@@ -330,6 +334,7 @@ impl App {
                 role: Role::System,
                 content: response,
             });
+            self.scroll_to_bottom();
         }
     }
 
@@ -406,35 +411,44 @@ impl App {
     }
 
     pub async fn start_streaming_chat(&mut self, prompt: &str) {
-        if let Some(ref client) = self.llm_client {
-            self.is_streaming = true;
-            let handler = StreamHandler::new();
-            self.stream_handler = Some(handler.clone());
-
-            let client = client.clone();
-            let prompt = prompt.to_string();
-            let system_prompt = self.generate_system_prompt();
-
-            tokio::spawn(async move {
-                let handler_clone = handler.clone();
-                let callback = move |token: String| {
-                    let _ = handler_clone.send_token(token);
-                    true
-                };
-
-                // 构建完整的提示，包含系统提示和用户消息
-                let full_prompt = format!("System: {}\n\nUser: {}", system_prompt, prompt);
-
-                match client.generate_completion_stream(&full_prompt, callback).await {
-                    Ok(_) => {
-                        let _ = handler.send_done();
-                    }
-                    Err(e) => {
-                        let _ = handler.send_error(e.to_string());
-                    }
-                }
-            });
+        if self.llm_client.is_none() {
+            return;
         }
+        self.is_streaming = true;
+        
+        // 在聊天历史中预先插入一条空的 AI 消息，用于流式更新
+        self.chat_history.add_message(Message {
+            role: Role::Assistant,
+            content: String::new(),
+        });
+        self.scroll_to_bottom();
+        
+        let handler = StreamHandler::new();
+        self.stream_handler = Some(handler.clone());
+
+        let client = self.llm_client.as_ref().unwrap().clone();
+        let prompt = prompt.to_string();
+        let system_prompt = self.generate_system_prompt();
+
+        tokio::spawn(async move {
+            let handler_clone = handler.clone();
+            let callback = move |token: String| {
+                let _ = handler_clone.send_token(token);
+                true
+            };
+
+            // 构建完整的提示，包含系统提示和用户消息
+            let full_prompt = format!("System: {}\n\nUser: {}", system_prompt, prompt);
+
+            match client.generate_completion_stream(&full_prompt, callback).await {
+                Ok(_) => {
+                    let _ = handler.send_done();
+                }
+                Err(e) => {
+                    let _ = handler.send_error(e.to_string());
+                }
+            }
+        });
     }
 
     pub fn render(&mut self, f: &mut Frame) {
@@ -444,7 +458,7 @@ impl App {
     }
 
     pub async fn finalize_streaming_response(&mut self) {
-        let ai_response = {
+        let ai_response_opt = {
             let mut response = self.streaming_response.lock().await;
             if !response.content.is_empty() {
                 let content = response.content.clone();
@@ -457,11 +471,12 @@ impl App {
         };
         
         // 在释放 response 借用后，处理 AI 响应中的代码修改指令
-        if let Some(ai_response) = ai_response {
-            self.chat_history.add_message(Message {
-                role: Role::Assistant,
-                content: ai_response.clone(),
-            });
+        if let Some(ai_response) = ai_response_opt {
+            // 此时聊天历史中的最后一条 AI 消息已经在流式过程中被更新完毕
+            // 这里不再重复添加，只用于解析代码修改指令
+            
+            // 自动滚动到底部
+            // self.scroll_to_bottom();
             
             // 检测修改指令并立即显示确认对话
             // 不等待用户继续输入
@@ -470,5 +485,10 @@ impl App {
         
         self.is_streaming = false;
         self.stream_handler = None;
+    }
+    
+    /// 滚动到聊天历史底部
+    pub fn scroll_to_bottom(&mut self) {
+        self.chat_scroll_offset = 0;
     }
 }

@@ -183,6 +183,7 @@ impl EventHandler {
                     // 清空待确认的修改
                     app.pending_modifications.clear();
                     app.modification_confirmation_pending = false;
+                    app.scroll_to_bottom();
                     return AppAction::None;
                 }
                 KeyCode::Char('3') => {
@@ -195,6 +196,7 @@ impl EventHandler {
                     });
                     app.pending_modifications.clear();
                     app.modification_confirmation_pending = false;
+                    app.scroll_to_bottom();
                     return AppAction::None;
                 }
                 KeyCode::Esc => {
@@ -205,6 +207,7 @@ impl EventHandler {
                     });
                     app.pending_modifications.clear();
                     app.modification_confirmation_pending = false;
+                    app.scroll_to_bottom();
                     return AppAction::None;
                 }
                 KeyCode::Enter => {
@@ -287,6 +290,7 @@ impl EventHandler {
                     
                     app.pending_modifications.clear();
                     app.modification_confirmation_pending = false;
+                    app.scroll_to_bottom(); // 滚动到底部显示最新消息
                     return AppAction::None;
                 }
                 _ => return AppAction::None,
@@ -360,6 +364,7 @@ impl EventHandler {
                             role: crate::core::message::Role::System,
                             content: "✅ 已复制到剪贴板".to_string(),
                         });
+                        app.scroll_to_bottom();
                     }
                     AppAction::None
                 } else {

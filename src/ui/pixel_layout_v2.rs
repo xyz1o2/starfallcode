@@ -201,7 +201,7 @@ fn render_history_with_avatars(f: &mut Frame, app: &App, area: Rect, theme: &The
             break;
         }
 
-        let (role_label, role_color) = match msg.role {
+        let (_role_label, _role_color) = match msg.role {
             AppRole::User => ("USER", theme.accent_user),
             AppRole::Assistant => ("AI", theme.accent_ai),
             AppRole::System => ("SYSTEM", Color::Yellow),

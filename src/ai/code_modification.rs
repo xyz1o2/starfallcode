@@ -52,11 +52,21 @@ impl AICodeModificationDetector {
     /// 1. 创建文件: "create file `path`" 或 "create `path`"
     /// 2. 修改文件: "modify `path`" 或 "update `path`"
     /// 3. 删除文件: "delete `path`" 或 "remove `path`"
+    /// 4. Search/Replace 块: <<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE
+    /// 5. Diff 块: ```diff ... ```
     pub fn detect_modifications(response: &str) -> Vec<CodeModificationOp> {
         let mut operations = Vec::new();
         
         // 提取所有代码块
         let code_blocks = Self::extract_code_blocks(response);
+        
+        // 优先检测 Search/Replace 块格式（Aider 风格）
+        let search_replace_ops = Self::detect_search_replace_blocks(response);
+        operations.extend(search_replace_ops);
+        
+        // 检测 Diff 块格式
+        let diff_ops = Self::detect_diff_blocks(response);
+        operations.extend(diff_ops);
         
         // 检测创建文件指令
         if let Some(creates) = Self::detect_create_instructions(response) {
@@ -91,6 +101,100 @@ impl AICodeModificationDetector {
         }
         
         operations
+    }
+
+    /// 检测 Search/Replace 块格式（Aider 风格）
+    /// 格式: <<<<<<< SEARCH\n..old code..\n=======\n..new code..\n>>>>>>> REPLACE
+    fn detect_search_replace_blocks(response: &str) -> Vec<CodeModificationOp> {
+        let mut operations = Vec::new();
+        let re = Regex::new(
+            r"(?s)<<<<<<< SEARCH\s*\n(.*?)\n=======\s*\n(.*?)\n>>>>>>> REPLACE"
+        ).unwrap();
+        
+        for cap in re.captures_iter(response) {
+            let search = cap.get(1).map(|m| m.as_str().trim().to_string()).unwrap_or_default();
+            let replace = cap.get(2).map(|m| m.as_str().trim().to_string()).unwrap_or_default();
+            
+            // 尝试从上下文推断文件路径
+            if let Some(path) = Self::infer_file_path_from_context(response) {
+                operations.push(CodeModificationOp::Modify {
+                    path,
+                    search,
+                    replace,
+                });
+            }
+        }
+        
+        operations
+    }
+    
+    /// 检测 Diff 块格式
+    /// 格式: ```diff\n- old line\n+ new line\n```
+    fn detect_diff_blocks(response: &str) -> Vec<CodeModificationOp> {
+        let mut operations = Vec::new();
+        let re = Regex::new(r"```diff\s*\n([\s\S]*?)```").unwrap();
+        
+        for cap in re.captures_iter(response) {
+            let diff_content = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+            
+            // 解析 diff 块
+            let (search, replace) = Self::parse_diff_block(diff_content);
+            
+            if !search.is_empty() && !replace.is_empty() {
+                if let Some(path) = Self::infer_file_path_from_context(response) {
+                    operations.push(CodeModificationOp::Modify {
+                        path,
+                        search,
+                        replace,
+                    });
+                }
+            }
+        }
+        
+        operations
+    }
+    
+    /// 从 Diff 块解析 search 和 replace 内容
+    fn parse_diff_block(diff: &str) -> (String, String) {
+        let mut search_lines = Vec::new();
+        let mut replace_lines = Vec::new();
+        
+        for line in diff.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('-') && !trimmed.starts_with("---") {
+                search_lines.push(trimmed[1..].trim());
+            } else if trimmed.starts_with('+') && !trimmed.starts_with("+++") {
+                replace_lines.push(trimmed[1..].trim());
+            } else if !trimmed.is_empty() && !trimmed.starts_with("@@") {
+                // 不变的行，两边都加上
+                search_lines.push(trimmed);
+                replace_lines.push(trimmed);
+            }
+        }
+        
+        (search_lines.join("\n"), replace_lines.join("\n"))
+    }
+    
+    /// 从上下文推断文件路径
+    fn infer_file_path_from_context(response: &str) -> Option<String> {
+        // 查找常见的文件路径模式
+        let patterns = [
+            r"(?:file|path)\s*[:\-]?\s*`?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)`?",
+            r"\*\*([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)\*\*",
+            r"`([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)`",
+        ];
+        
+        for pattern in &patterns {
+            if let Ok(re) = Regex::new(pattern) {
+                if let Some(cap) = re.captures(response) {
+                    if let Some(path_match) = cap.get(1) {
+                        return Some(path_match.as_str().to_string());
+                    }
+                }
+            }
+        }
+        
+        None
     }
 
     /// 提取代码块

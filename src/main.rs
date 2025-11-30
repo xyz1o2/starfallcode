@@ -126,15 +126,31 @@ async fn run_app<B: ratatui::backend::Backend>(
                 if let Some(stream_event) = maybe_stream_event {
                     match stream_event {
                         crate::ai::streaming::StreamEvent::Token(t) => {
+                            {
+                                // 将 token 追加到聊天历史中最后一条 AI 消息
+                                if let Some(last_msg) = app.chat_history.get_messages_mut().back_mut() {
+                                    if let crate::core::message::Role::Assistant = last_msg.role {
+                                        last_msg.content.push_str(&t);
+                                    }
+                                }
+                            }
+                            // 同步到 streaming_response（保持现有渲染逻辑兼容）
                             let mut streaming_response = app.streaming_response.lock().await;
                             streaming_response.append(&t);
+                            drop(streaming_response); // 释放锁
+                            
+                            // 立即触发重新渲染以显示新的 token
+                            terminal.draw(|f| app.render(f)).ok();
                         }
                         crate::ai::streaming::StreamEvent::Done => {
                             app.finalize_streaming_response().await;
+                            // 最终渲染
+                            terminal.draw(|f| app.render(f)).ok();
                         }
                         crate::ai::streaming::StreamEvent::Error(e) => {
                             eprintln!("Streaming Error: {}", e);
                             app.finalize_streaming_response().await;
+                            terminal.draw(|f| app.render(f)).ok();
                         }
                     }
                 }

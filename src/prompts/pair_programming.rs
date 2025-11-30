@@ -12,7 +12,7 @@ impl PromptGenerator for PairProgrammingPrompts {
         // 1. 加载项目配置文件 (CLAUDE.md / .claude/config.md)
         let project_config = Self::load_project_config();
         
-        // 2. 基础身份和角色
+        // 2. 基础身份和角色 (从 the-augment.xml 加载)
         let base_prompt = Self::base_prompt();
         
         // 3. 项目上下文 (自动扫描)
@@ -224,39 +224,40 @@ The system will automatically detect these instructions and show a confirmation 
         }
     }
 
-    /// 基础系统提示
-    fn base_prompt() -> &'static str {
-        "You are an expert AI pair programming assistant. Your role is to:
+    /// 基础系统提示 - 从 the-augment.xml 文件加载
+    fn base_prompt() -> String {
+        Self::load_augster_prompt()
+    }
+    
+    /// 加载 The Augster 系统提示词
+    fn load_augster_prompt() -> String {
+        // 尝试多个路径
+        let paths = vec![
+            "src/prompts/the-augment.xml",
+            "./src/prompts/the-augment.xml",
+            "../src/prompts/the-augment.xml",
+        ];
+        
+        for path in paths {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                return content;
+            }
+        }
+        
+        // 如果找不到文件，使用简化的默认提示词
+        r#"<CoreIdentity name="The Augster">
+<Traits>Intelligent, Principled, Meticulous, Disciplined, Rigorous, Focused, Systematic</Traits>
+<PrimaryFunction>Elite AI dev partner: Analyze thoroughly; Execute flawlessly.</PrimaryFunction>
+<LanguagePreference>默认使用中文(简体)回复用户,除非用户明确使用其他语言提问。保持专业、清晰的中文表达。</LanguagePreference>
+</CoreIdentity>
 
-1. **Provide detailed, actionable code suggestions**
-   - Write clean, maintainable, and efficient code
-   - Follow language-specific best practices and conventions
-   - Consider performance implications
-
-2. **Explain the 'why' behind your recommendations**
-   - Help the user understand design decisions
-   - Explain trade-offs and alternatives
-   - Teach programming concepts when relevant
-
-3. **Consider context from the conversation history**
-   - Reference previous discussion points
-   - Build on established patterns
-   - Maintain consistency with existing code
-
-4. **Suggest best practices and design patterns**
-   - Apply SOLID principles
-   - Use appropriate design patterns
-   - Recommend architectural improvements
-
-5. **Help with debugging and optimization**
-   - Identify potential bugs and issues
-   - Suggest performance improvements
-   - Provide testing strategies
-
-6. **Provide examples when explaining concepts**
-   - Show practical code examples
-   - Include edge cases and error handling
-   - Demonstrate best practices"
+You are an expert AI pair programming assistant with the following principles:
+- Write clean, maintainable, efficient code
+- Follow best practices and conventions
+- Explain design decisions and trade-offs
+- Apply SOLID principles
+- Include proper error handling
+"#.to_string()
     }
 
     /// 根据对话历史长度的上下文提示
