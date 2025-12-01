@@ -344,15 +344,7 @@ fn render_input_area(f: &mut Frame, app: &App, area: Rect, theme: &Theme) {
     );
 
     // 2. 渲染输入框
-    let input_widget = if app.input_text.is_empty() {
-        let placeholder = Line::from(Span::styled(
-            "Type 'add', 'del', 'fix' or chat...",
-            Style::default().fg(Color::Rgb(120, 120, 120)),
-        ));
-        Paragraph::new(vec![placeholder]).style(Style::default().fg(Color::White))
-    } else {
-        Paragraph::new(app.input_text.as_str()).style(Style::default().fg(Color::White))
-    };
+    let input_widget = Paragraph::new(app.input_text.as_str()).style(Style::default().fg(Color::White));
     f.render_widget(input_widget, chunks[1]);
 
     // 3. 计算并设置光标位置

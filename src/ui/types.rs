@@ -99,6 +99,7 @@ pub enum ChatAction {
     ScrollUp,
     ScrollDown,
     ClearHistory,
+    CopyLastMessage,
 }
 
 #[derive(Clone, Debug)]

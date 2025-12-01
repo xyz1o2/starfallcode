@@ -9,6 +9,8 @@ use ratatui::{
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use chrono::{DateTime, Utc};
+use unicode_width::UnicodeWidthStr;
+use arboard::Clipboard;
 
 #[derive(Clone, Debug)]
 pub struct EnhancedChatMessage {
@@ -122,7 +124,7 @@ impl MainChatArea {
 
         // Render input hint
         let hint_text = if self.input_text.is_empty() {
-            "Type your message... (Enter to send, Ctrl+C to exit, /help for commands)"
+            "Type your message... (Enter to send, Ctrl+C to exit, Ctrl+Y to copy last AI message, /help for commands)"
         } else {
             "Press Enter to send, Escape to clear"
         };
@@ -204,17 +206,17 @@ impl MainChatArea {
         let mut lines = Vec::new();
 
         // Message header with role and timestamp
-        let (role_icon, role_color) = match message.role.as_str() {
-            "user" => ("👤", theme.colors.primary),
-            "assistant" => ("🤖", theme.colors.secondary),
-            "system" => ("⚙️", theme.colors.warning),
-            _ => ("📝", theme.colors.text_primary),
+        let (role_text, role_color) = match message.role.as_str() {
+            "user" => ("USER", theme.colors.primary),
+            "assistant" => ("AI", theme.colors.secondary),
+            "system" => ("SYSTEM", theme.colors.warning),
+            _ => ("MSG", theme.colors.text_primary),
         };
 
         let timestamp_str = message.timestamp.format("%H:%M:%S").to_string();
         let header_line = Line::from(vec![
             Span::styled(
-                format!("{} {}: ", role_icon, message.role.to_uppercase()),
+                format!("{}: ", role_text),
                 Style::default().fg(role_color).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
@@ -311,6 +313,9 @@ impl MainChatArea {
             }
             KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 ChatAction::ClearHistory
+            }
+            KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                ChatAction::CopyLastMessage
             }
             KeyCode::Char(c) => {
                 // Ensure cursor is at a valid character boundary
@@ -478,6 +483,25 @@ impl MainChatArea {
         self.scroll_offset = 0;
     }
 
+    /// Get last assistant message content
+    pub fn get_last_assistant_message(&self) -> Option<String> {
+        self.messages.iter()
+            .rev()
+            .find(|msg| msg.role == "assistant" && !msg.content.is_empty())
+            .map(|msg| msg.content.clone())
+    }
+
+    /// Copy last assistant message to clipboard
+    pub fn copy_last_message(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(content) = self.get_last_assistant_message() {
+            let mut clipboard = arboard::Clipboard::new()?;
+            clipboard.set_text(content)?;
+            Ok(())
+        } else {
+            Err("No assistant message to copy".into())
+        }
+    }
+
     /// Scroll up by specified lines
     pub fn scroll_up(&mut self, lines: usize) {
         self.auto_scroll = false;
@@ -514,29 +538,34 @@ impl MainChatArea {
 
         let mut lines = Vec::new();
         let mut current_line = String::new();
-        
+
         for word in text.split_whitespace() {
-            if current_line.len() + word.len() + 1 > width {
+            // 计算当前行宽度时考虑 Unicode 字符宽度
+            let current_width = current_line.width();
+            let word_width = word.width();
+            let space_width = if current_line.is_empty() { 0 } else { 1 }; // 空格宽度
+
+            if current_width + word_width + space_width > width {
                 if !current_line.is_empty() {
                     lines.push(current_line);
                     current_line = String::new();
                 }
             }
-            
+
             if !current_line.is_empty() {
                 current_line.push(' ');
             }
             current_line.push_str(word);
         }
-        
+
         if !current_line.is_empty() {
             lines.push(current_line);
         }
-        
+
         if lines.is_empty() {
             lines.push(String::new());
         }
-        
+
         lines
     }
 }

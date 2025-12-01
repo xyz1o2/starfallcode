@@ -4,7 +4,7 @@ use crate::ai::config::LLMConfig;
 use crate::ai::streaming::{StreamHandler, StreamingChatResponse};
 use crate::core::message::{Message, Role};
 use crate::core::history::ChatHistory;
-use crate::core::GeminiArchitecture;
+use crate::core::{GeminiArchitecture, ConversationEngine};
 use crate::ui::command_hints::CommandHints;
 use crate::commands::file_commands::FileCommandHandler;
 use crate::prompts;
@@ -170,6 +170,9 @@ pub struct App {
 
     // Gemini 架构
     pub gemini: GeminiArchitecture,
+
+    // Conversation Engine
+    pub conversation_engine: ConversationEngine,
 }
 
 impl App {
@@ -201,6 +204,7 @@ impl App {
             render_engine: crate::ui::render_engine::RenderEngine::new(),
             frame_count: 0,
             gemini: GeminiArchitecture::new(),
+            conversation_engine: ConversationEngine::new(),
         }
     }
 
@@ -211,7 +215,13 @@ impl App {
 
     fn update_llm_client(&mut self) {
         if let Some(config) = &self.llm_config {
-            self.llm_client = Some(Arc::new(LLMClient::new(config.clone())));
+            let client = Arc::new(LLMClient::new(config.clone()));
+            self.llm_client = Some(client.clone());
+            // 重新创建 conversation_engine 并设置 llm_client
+            self.conversation_engine = ConversationEngine::new()
+                .with_llm_client(client.clone());
+            // 设置 GeminiArchitecture 的 LLM 客户端
+            self.gemini.set_llm_client(client);
         }
     }
 

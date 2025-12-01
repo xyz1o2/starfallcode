@@ -101,22 +101,16 @@ impl ResponseValidator {
             match operation().await {
                 Ok(result) => {
                     if attempt > 0 {
-                        println!("✓ Succeeded on attempt {}", attempt + 1);
+                        // Succeeded on attempt
                     }
                     return Ok(result);
                 }
                 Err(e) if attempt < self.config.max_attempts - 1 => {
-                    println!(
-                        "⚠ Attempt {} failed: {}. Retrying in {}ms...",
-                        attempt + 1,
-                        e,
-                        delay
-                    );
+                    // Attempt failed, retrying
                     sleep(Duration::from_millis(delay)).await;
                     delay = (delay as f64 * self.config.backoff_multiplier) as u64;
                 }
                 Err(e) => {
-                    println!("✗ All {} attempts failed: {}", self.config.max_attempts, e);
                     return Err(e);
                 }
             }
@@ -303,7 +297,6 @@ impl CompositeRouter {
         for strategy in &self.strategies {
             match strategy.route(input, context).await {
                 Ok(decision) => {
-                    println!("✓ {} -> {}", strategy.name(), decision.model);
                     return Ok(decision);
                 }
                 Err(_) => continue,
@@ -458,7 +451,6 @@ impl GeminiArchitecture {
 
         // 1. 路由决策
         let routing_decision = self.router.route(&user_input, &self.history.get_context()).await?;
-        println!("📍 Routing: {}", routing_decision.model);
 
         let messages = self.build_chat_messages(&user_input);
 
@@ -476,7 +468,6 @@ impl GeminiArchitecture {
         // 4. 检测工具调用
         let tool_calls = self.extract_tool_calls(&response);
         if !tool_calls.is_empty() {
-            println!("🔧 Tool calls detected: {:?}", tool_calls);
             turn = turn.with_tool_calls(tool_calls.clone());
 
             // 5. 执行工具

@@ -1,0 +1,11 @@
+#!/bin/bash
+echo "=== LLM Configuration Verification ==="
+echo ""
+echo "Provider: $LLM_PROVIDER"
+echo "Model: $CLAUDE_MODEL"
+echo "OpenAI Key: ${OPENAI_API_KEY:-not set}"
+echo "Anthropic Key: ${ANTHROPIC_API_KEY:-not set}"
+echo "Gemini Key: ${GEMINI_API_KEY:-not set}"
+echo ""
+echo "If ANTHROPIC_API_KEY shows 'not set', you need to set it:"
+echo "  export ANTHROPIC_API_KEY='your_key_here'"
