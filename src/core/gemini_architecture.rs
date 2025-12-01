@@ -105,7 +105,7 @@ impl ResponseValidator {
                     }
                     return Ok(result);
                 }
-                Err(e) if attempt < self.config.max_attempts - 1 => {
+                Err(_e) if attempt < self.config.max_attempts - 1 => {
                     // Attempt failed, retrying
                     sleep(Duration::from_millis(delay)).await;
                     delay = (delay as f64 * self.config.backoff_multiplier) as u64;

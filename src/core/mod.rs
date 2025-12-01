@@ -19,27 +19,19 @@ pub mod streaming_optimizer;
 pub mod token_calculator;
 pub mod logger;
 pub mod performance_optimizer;
-pub mod test_suite;
+pub mod chat_orchestrator;
+pub mod health_check;
 
-pub use conversation_engine::{
-    ConversationEngine, IntentRecognizer, ContextManager, ResponseProcessor,
-    UserIntent, ConversationContext, ProcessedResponse, CodeModification,
-    ModificationOperation, FileContent,
-};
+pub use conversation_engine::{ConversationEngine, ConversationContext, UserIntent};
 
-pub use gemini_architecture::{
-    GeminiArchitecture, CompositeRouter,
-    Turn, ConversationHistory, StreamEventType,
-};
+pub use gemini_architecture::{GeminiArchitecture, CompositeRouter};
 
-pub use retry_handler::{RetryConfig, RetryHandler, RetryableError};
-pub use response_validation::{ResponseValidator, ResponseError};
+pub use retry_handler::{RetryConfig, RetryHandler};
 pub use routing_strategy::{RoutingDecision, RoutingStrategy};
-pub use streaming::{StreamEvent, StreamEventType as StreamType, StreamHandler, StreamBuffer};
-pub use hooks::{HookManager, BeforeModelHook, AfterModelHook, BeforeToolSelectionHook, 
-    AfterToolExecutionHook, OnRetryHook, LoggingHook};
-pub use routing_strategies::{FallbackStrategy, ModelSelectionStrategy, CostOptimizationStrategy, PerformanceStrategy};
-pub use message_history::{MessageHistory, Message, MessageRole, Turn as MessageTurn};
-pub use error_recovery::{ErrorRecovery, RecoverableError, RecoveryStrategy, RecoveryConfig, RecoveryResult};
-pub use streaming_optimizer::{StreamingOptimizer, StreamingOptimizerConfig, OptimizedStreamEvent, PerformanceMetrics};
-pub use token_calculator::{TokenCalculator, TokenEncoding, ModelInfo, TokenStats};
+pub use hooks::HookManager;
+pub use message_history::MessageHistory;
+pub use error_recovery::ErrorRecovery;
+pub use streaming_optimizer::StreamingOptimizer;
+pub use token_calculator::TokenCalculator;
+pub use context_optimizer::ContextWindowOptimizer;
+pub use chat_orchestrator::ChatOrchestrator;

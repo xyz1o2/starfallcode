@@ -11,7 +11,6 @@ use ratatui::{
 use crate::app::App;
 use crate::core::message::Role as AppRole;
 use crate::ui::avatar::PixelData;
-use crate::ui::svg_avatar;
 use std::collections::HashMap;
 
 // ============================================================================

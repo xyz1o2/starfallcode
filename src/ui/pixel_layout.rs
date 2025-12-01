@@ -264,13 +264,12 @@ fn render_input_area(f: &mut Frame, app: &App, area: Rect) {
     
     // 计算显示的文本（支持水平滚动）
     // 当文本超过宽度时，从末尾向前显示，保证光标始终可见
-    let (display_text, display_start_pos) = if char_count > available_width {
+    let display_text = if char_count > available_width {
         // 显示最后 available_width 个字符
         let start_pos = char_count.saturating_sub(available_width);
-        let text = input_text.chars().skip(start_pos).collect::<String>();
-        (text, start_pos)
+        input_text.chars().skip(start_pos).collect::<String>()
     } else {
-        (input_text.to_string(), 0)
+        input_text.to_string()
     };
     
     let input_line = Line::from(vec![

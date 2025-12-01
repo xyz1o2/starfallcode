@@ -2,7 +2,6 @@
 /// 
 /// 支持实时流式响应处理，类似 Gemini CLI 的流式事件系统
 
-use std::sync::Arc;
 use tokio::sync::mpsc;
 
 /// 流式事件类型

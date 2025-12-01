@@ -7,7 +7,8 @@
 /// - PerformanceStrategy: 根据性能选择模型
 
 use async_trait::async_trait;
-use crate::core::{RoutingStrategy, RoutingDecision, ConversationContext, RetryConfig, UserIntent};
+use crate::core::{RoutingStrategy, RoutingDecision, RetryConfig};
+use crate::core::conversation_engine::{ConversationContext, UserIntent};
 
 /// 降级策略 - 主模型失败时尝试备选模型
 pub struct FallbackStrategy {

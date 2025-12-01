@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use chrono::{DateTime, Local};
-use crate::core::{RetryHandler, RetryConfig, RoutingStrategy, CompositeRouter};
+use crate::core::{RetryHandler, RetryConfig, CompositeRouter};
 use crate::core::tool_executor::ToolExecutor;
 use crate::core::HookManager;
 use crate::ai::client::LLMClient;
@@ -525,7 +525,7 @@ impl ConversationEngine {
             return Err("LLM client not configured".to_string());
         }
         
-        let llm_client = self.llm_client.as_ref().unwrap();
+        let _llm_client = self.llm_client.as_ref().unwrap();
         
         // 这里应该调用实际的 LLM 客户端
         // 为了演示，返回模拟响应
@@ -571,7 +571,7 @@ impl ConversationEngine {
             println!("[TOOLS] Executing {} modifications (depth: {})", response.modifications.len(), depth);
             
             // 执行工具
-            if let Some(executor) = &self.tool_executor {
+            if let Some(_executor) = &self.tool_executor {
                 // 这里应该执行实际的工具
                 // 为了演示，我们只是标记为已处理
                 for modification in &response.modifications {

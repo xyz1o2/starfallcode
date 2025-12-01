@@ -8,7 +8,6 @@
 /// - 历史管理
 
 use std::collections::HashMap;
-use async_trait::async_trait;
 
 /// 可恢复的错误类型
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

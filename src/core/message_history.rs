@@ -8,7 +8,7 @@
 
 use std::collections::VecDeque;
 use chrono::{DateTime, Local};
-use crate::core::ConversationContext;
+use crate::core::conversation_engine::ConversationContext;
 
 /// 消息角色
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,6 +157,12 @@ impl MessageHistory {
         }
 
         Ok(())
+    }
+
+    /// 添加助手消息（便捷方法）
+    pub fn add_assistant_message(&mut self, content: impl Into<String>) -> Result<(), String> {
+        let msg = Message::new(MessageRole::Assistant, content);
+        self.add_message(msg)
     }
 
     /// 获取所有消息

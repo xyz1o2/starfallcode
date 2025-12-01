@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 use async_trait::async_trait;
-use crate::core::{ConversationContext, ProcessedResponse};
+use crate::core::conversation_engine::{ConversationContext, ProcessedResponse};
 
 /// 钩子执行结果
 pub type HookResult = Result<(), String>;
@@ -123,6 +123,16 @@ impl HookManager {
             hook.execute(attempt, reason).await?;
         }
         Ok(())
+    }
+
+    /// 前置钩子别名（用于 chat_orchestrator）
+    pub async fn run_pre_hooks(&self, context: &ConversationContext) -> HookResult {
+        self.fire_before_model_hooks(context).await
+    }
+
+    /// 后置钩子别名（用于 chat_orchestrator）
+    pub async fn run_post_hooks(&self, response: &ProcessedResponse) -> HookResult {
+        self.fire_after_model_hooks(response).await
     }
 }
 

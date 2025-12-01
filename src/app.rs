@@ -4,7 +4,7 @@ use crate::ai::config::LLMConfig;
 use crate::ai::streaming::{StreamHandler, StreamingChatResponse};
 use crate::core::message::{Message, Role};
 use crate::core::history::ChatHistory;
-use crate::core::{GeminiArchitecture, ConversationEngine};
+use crate::core::{GeminiArchitecture, ConversationEngine, ChatOrchestrator};
 use crate::ui::command_hints::CommandHints;
 use crate::commands::file_commands::FileCommandHandler;
 use crate::prompts;
@@ -173,6 +173,9 @@ pub struct App {
 
     // Conversation Engine
     pub conversation_engine: ConversationEngine,
+    
+    // ChatOrchestrator - 统一的对话编排器
+    pub chat_orchestrator: Option<ChatOrchestrator>,
 }
 
 impl App {
@@ -205,6 +208,7 @@ impl App {
             frame_count: 0,
             gemini: GeminiArchitecture::new(),
             conversation_engine: ConversationEngine::new(),
+            chat_orchestrator: None,
         }
     }
 
@@ -221,7 +225,9 @@ impl App {
             self.conversation_engine = ConversationEngine::new()
                 .with_llm_client(client.clone());
             // 设置 GeminiArchitecture 的 LLM 客户端
-            self.gemini.set_llm_client(client);
+            self.gemini.set_llm_client(client.clone());
+            // 初始化 ChatOrchestrator
+            self.chat_orchestrator = Some(ChatOrchestrator::new(client));
         }
     }
 
@@ -249,24 +255,79 @@ impl App {
         if input.starts_with('/') {
             self.handle_command(&input).await;
         } else {
-            // 处理 @ 提及并注入文件内容
-            let processed_input = self.process_mentions(&input);
+            // 直接使用 LLM 客户端流式处理
+            if let Some(client) = &self.llm_client {
+                let messages = vec![
+                    ChatMessage {
+                        role: "user".to_string(),
+                        content: input.clone(),
+                    }
+                ];
 
-            match self.gemini.chat(processed_input.clone()).await {
-                Ok(response) => {
-                    self.chat_history.add_message(Message {
-                        role: Role::Assistant,
-                        content: response.clone(),
-                    });
-                    self.scroll_to_bottom();
-                    self.process_ai_response_for_modifications(&response);
+                let response_text = Arc::new(Mutex::new(String::new()));
+                let response_clone = response_text.clone();
+
+                let callback = move |token: String| -> bool {
+                    // 使用 try_lock() 避免在异步运行时中阻塞
+                    if let Ok(mut resp) = response_clone.try_lock() {
+                        resp.push_str(&token);
+                        true
+                    } else {
+                        false
+                    }
+                };
+
+                match client.generate_completion_stream(messages, None, callback).await {
+                    Ok(_) => {
+                        // 使用 try_lock() 而不是 blocking_lock() 避免 panic
+                        match response_text.try_lock() {
+                            Ok(resp) => {
+                                let content = resp.clone();
+                                drop(resp);
+
+                                self.chat_history.add_message(Message {
+                                    role: Role::Assistant,
+                                    content: content.clone(),
+                                });
+                                self.scroll_to_bottom();
+                                self.process_ai_response_for_modifications(&content);
+                            }
+                            Err(_err) => {
+                                self.chat_history.add_message(Message {
+                                    role: Role::System,
+                                    content: "❌ 错误: 无法获取响应锁".to_string(),
+                                });
+                                self.scroll_to_bottom();
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        self.chat_history.add_message(Message {
+                            role: Role::System,
+                            content: format!("❌ LLM 错误: {}", err),
+                        });
+                        self.scroll_to_bottom();
+                    }
                 }
-                Err(err) => {
-                    self.chat_history.add_message(Message {
-                        role: Role::System,
-                        content: format!("❌ Gemini 错误: {}", err),
-                    });
-                    self.scroll_to_bottom();
+            } else {
+                // 如果 ChatOrchestrator 未初始化，使用备用方案
+                let processed_input = self.process_mentions(&input);
+                match self.gemini.chat(processed_input.clone()).await {
+                    Ok(response) => {
+                        self.chat_history.add_message(Message {
+                            role: Role::Assistant,
+                            content: response.clone(),
+                        });
+                        self.scroll_to_bottom();
+                        self.process_ai_response_for_modifications(&response);
+                    }
+                    Err(err) => {
+                        self.chat_history.add_message(Message {
+                            role: Role::System,
+                            content: format!("❌ Gemini 错误: {}", err),
+                        });
+                        self.scroll_to_bottom();
+                    }
                 }
             }
         }

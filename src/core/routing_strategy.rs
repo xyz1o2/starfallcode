@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::core::{ConversationContext, RetryConfig};
+use crate::core::conversation_engine::ConversationContext;
+use crate::core::RetryConfig;
 
 /// 模型路由决策结果
 #[derive(Debug, Clone)]

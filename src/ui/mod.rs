@@ -24,8 +24,8 @@ pub mod avatar;
 pub mod svg_avatar;
 pub mod smart_chat_display;
 
-pub use smart_chat_display::{
-    SmartChatDisplay, SmartMessage, MessageRole, MessageType,
-    ThinkingDisplay, SuggestionBar, StreamingDisplay,
-    CodeBlock, Issue, IssueSeverity, MessageMetadata, ChatStats,
-};
+// pub use smart_chat_display::{
+//     SmartChatDisplay, SmartMessage, MessageRole, MessageType,
+//     ThinkingDisplay, SuggestionBar, StreamingDisplay,
+//     CodeBlock, Issue, IssueSeverity, MessageMetadata, ChatStats,
+// };
