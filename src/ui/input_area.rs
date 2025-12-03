@@ -39,13 +39,28 @@ pub fn render_input_area(f: &mut Frame, app: &App, area: Rect, theme: &crate::ui
     f.render_widget(input_widget, chunks[1]);
 
     // 3. Calculate and set cursor position
-    let cursor_col = app.input_cursor as u16;
+    // Calculate the display width from start of string to cursor position
+    let cursor_col = calculate_cursor_column(&app.input_text, app.input_cursor);
 
     // Set cursor position (x = input area start + cursor offset, y = input area start)
     f.set_cursor(
         chunks[1].x + cursor_col,
         chunks[1].y,
     );
+}
+
+/// Calculate the display column position for cursor based on character display width
+/// Handles multi-byte characters correctly (important for Chinese/Japanese/Korean input)
+fn calculate_cursor_column(text: &str, cursor_char_index: usize) -> u16 {
+    // Get all characters up to the cursor position
+    let chars_before_cursor: Vec<char> = text.chars().take(cursor_char_index).collect();
+
+    // Calculate total display width using unicode-width
+    let total_width: usize = chars_before_cursor.iter()
+        .map(|c| unicode_width::UnicodeWidthChar::width(*c).unwrap_or(1))
+        .sum();
+
+    total_width as u16
 }
 
 #[cfg(test)]
