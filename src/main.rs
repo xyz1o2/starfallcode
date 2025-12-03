@@ -115,7 +115,13 @@ async fn run_app<B: ratatui::backend::Backend>(
                         }
                     }
                     crossterm::event::Event::Mouse(mouse) => {
-                        let _action = crate::events::handler::EventHandler::handle_mouse_event(app, mouse);
+                        // 获取终端尺寸
+                        let terminal_size = terminal.size().unwrap_or_default();
+                        let _action = crate::events::handler::EventHandler::handle_mouse_event(
+                            app,
+                            mouse,
+                            (terminal_size.width, terminal_size.height)
+                        );
                     }
                     _ => {}
                 }

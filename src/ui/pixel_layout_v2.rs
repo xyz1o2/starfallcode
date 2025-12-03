@@ -337,3 +337,99 @@ fn render_status_bar(f: &mut Frame, area: Rect, _theme: &Theme) {
     f.render_widget(para, area);
 }
 
+
+/// ============================================================================
+/// 鼠标选择文本功能
+/// ============================================================================
+
+use std::cmp::{min, max};
+
+/// Extract selected text from chat area based on mouse coordinates
+pub fn extract_text_from_chat_area(
+    app: &crate::app::App,
+    mouse_col: u16,
+    mouse_row: u16,
+    terminal_width: u16,
+    terminal_height: u16
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let mut selected_text = String::new();
+
+    // Check if we have a selection area
+    if let (Some(start), Some(end)) = (app.selection_start, app.selection_end) {
+        // Convert terminal coordinates to text coordinates
+        let min_col = min(start.0, end.0) as usize;
+        let max_col = max(start.0, end.0) as usize;
+        let min_row = min(start.1, end.1) as usize;
+        let max_row = max(start.1, end.1) as usize;
+
+        // Extract text from chat history based on the selection
+        for msg in app.chat_history.get_messages() {
+            let msg_lines: Vec<&str> = msg.content.lines().collect();
+
+            for (line_idx, line) in msg_lines.iter().enumerate() {
+                let line_start_row = line_idx;
+                let line_end_row = line_idx;
+
+                // Check if this line is within the vertical selection range
+                if line_start_row >= min_row && line_end_row <= max_row {
+                    let line_len = line.chars().count();
+
+                    // Check if this line is within the horizontal selection range
+                    if min_col < line_len && max_col > 0 {
+                        let start_char = min(min_col, line_len);
+                        let end_char = min(max_col, line_len);
+
+                        // Extract the selected portion of the line
+                        let line_chars: Vec<char> = line.chars().collect();
+                        let selected_chars: String = line_chars[start_char..end_char].iter().collect();
+
+                        selected_text.push_str(&selected_chars);
+                    }
+                }
+            }
+
+            // Add separator between messages
+            if !selected_text.is_empty() {
+                selected_text.push_str("\n\n");
+            }
+        }
+    }
+
+    Ok(selected_text.trim().to_string())
+}
+
+/// Render visual feedback for text selection
+pub fn render_selection_highlight(
+    f: &mut Frame,
+    app: &crate::app::App,
+    area: Rect,
+    theme: &Theme
+) {
+    if let (Some(start), Some(end)) = (app.selection_start, app.selection_end) {
+        // Calculate selection rectangle
+        let min_col = min(start.0, end.0);
+        let max_col = max(start.0, end.0);
+        let min_row = min(start.1, end.1);
+        let max_row = max(start.1, end.1);
+
+        // Only render if selection is within the chat area
+        if min_row < area.bottom() && max_row >= area.top() {
+            // For simplicity, we'll render a simple highlight effect
+            // In a full implementation, you would overlay the selected text with a different style
+            let highlight_area = Rect {
+                x: area.x + min_col,
+                y: area.y + min_row.saturating_sub(area.top()),
+                width: max_col - min_col,
+                height: max_row - min_row + 1,
+            };
+
+            // Render semi-transparent selection overlay
+            let selection_block = ratatui::widgets::Block::default()
+                .style(ratatui::style::Style::default()
+                    .bg(Color::Rgb(50, 50, 100))
+                    .add_modifier(Modifier::DIM));
+
+            f.render_widget(selection_block, highlight_area);
+        }
+    }
+}

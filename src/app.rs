@@ -156,6 +156,7 @@ pub struct App {
 
     // 鼠标选择
     pub selected_text: String,
+    pub selection_start: Option<(u16, u16)>,
     pub selection_end: Option<(u16, u16)>,
 
     // @ 提及建议
@@ -215,6 +216,7 @@ impl App {
             action_queue: ActionQueue::new(),
             input_scroll_offset: 0,
             selected_text: String::new(),
+            selection_start: None,
             selection_end: None,
             mention_suggestions: crate::ui::mention_suggestions::MentionSuggestions::new(),
             file_search: crate::ui::file_search::FileSearchEngine::new(),

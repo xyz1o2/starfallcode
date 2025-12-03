@@ -1,6 +1,7 @@
 use crate::app::{App, AppAction, ModificationChoice};
 use crate::ai::code_modification::{CodeModificationOp, CodeMatcher};
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind, MouseButton};
+use crate::ui::pixel_layout_v2::extract_text_from_chat_area;
 
 fn estimate_chat_lines(app: &App) -> usize {
     let mut total = 0;
@@ -27,37 +28,57 @@ fn estimate_chat_lines(app: &App) -> usize {
 pub struct EventHandler;
 
 impl EventHandler {
-    pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> AppAction {
+    pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, terminal_size: (u16, u16)) -> AppAction {
         match mouse.kind {
-            MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+            MouseEventKind::Down(MouseButton::Left) => {
                 // 左键按下 - 开始选择
-                app.selection_end = Some((mouse.column, mouse.row));
+                app.selection_start = Some((mouse.column, mouse.row));
                 app.selection_end = None;
                 app.selected_text.clear();
                 AppAction::None
             }
-            MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
-                // 左键释放 - 结束选择
-                app.selection_end = Some((mouse.column, mouse.row));
+            MouseEventKind::Up(MouseButton::Left) => {
+                // 左键释放 - 结束选择并复制到剪贴板
+                if app.selection_start.is_some() {
+                    app.selection_end = Some((mouse.column, mouse.row));
+
+                    // 提取选中的文本
+                    if let Ok(selected_text) = extract_text_from_chat_area(
+                        app,
+                        mouse.column,
+                        mouse.row,
+                        terminal_size.0,
+                        terminal_size.1
+                    ) {
+                        if !selected_text.is_empty() {
+                            app.selected_text = selected_text;
+
+                            // 自动复制到剪贴板
+                            if let Err(e) = Self::copy_to_clipboard(&app.selected_text) {
+                                eprintln!("Failed to copy to clipboard: {}", e);
+                            }
+                        }
+                    }
+                }
                 AppAction::None
             }
-            MouseEventKind::Drag(crossterm::event::MouseButton::Left) => {
+            MouseEventKind::Drag(MouseButton::Left) => {
                 // 拖动 - 更新选择范围
-                app.selection_end = Some((mouse.column, mouse.row));
+                if app.selection_start.is_some() {
+                    app.selection_end = Some((mouse.column, mouse.row));
+                }
                 AppAction::None
             }
             MouseEventKind::ScrollUp => {
                 // 鼠标滚轮向上 - 向上滚动聊天历史（看更早的消息）
-                // Increase offset (lines from bottom)
                 let max_scroll = estimate_chat_lines(app);
                 if app.chat_scroll_offset < max_scroll {
-                    app.chat_scroll_offset += 3; // Scroll faster with mouse
+                    app.chat_scroll_offset += 3;
                 }
                 AppAction::None
             }
             MouseEventKind::ScrollDown => {
                 // 鼠标滚轮向下 - 向下滚动聊天历史（看更新的消息）
-                // Decrease offset (lines from bottom)
                 if app.chat_scroll_offset > 0 {
                     app.chat_scroll_offset = app.chat_scroll_offset.saturating_sub(3);
                 }
@@ -65,6 +86,13 @@ impl EventHandler {
             }
             _ => AppAction::None,
         }
+    }
+
+    /// 复制文本到系统剪贴板
+    fn copy_to_clipboard(text: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut clipboard = arboard::Clipboard::new()?;
+        clipboard.set_text(text.to_string())?;
+        Ok(())
     }
     
     pub fn handle_chat_event(app: &mut App, key: KeyEvent) -> AppAction {
