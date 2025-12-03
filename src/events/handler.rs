@@ -297,6 +297,65 @@ impl EventHandler {
             }
         }
 
+        // 新的高优先级：处理文件名建议对话框
+        if app.filename_suggestion.is_visible() {
+            match key.code {
+                KeyCode::Up => {
+                    app.filename_suggestion.select_previous();
+                    return AppAction::None;
+                }
+                KeyCode::Down => {
+                    app.filename_suggestion.select_next();
+                    return AppAction::None;
+                }
+                KeyCode::Enter => {
+                    // 用户确认选择，创建文件
+                    if let Some(filename) = app.filename_suggestion.get_selected() {
+                        let code_content = app.filename_suggestion.get_code_content().to_string();
+
+                        // 隐藏对话框
+                        app.filename_suggestion.hide();
+
+                        // 使用文件处理器创建文件
+                        let result = app.file_command_handler.file_handler().write_file(&filename, &code_content);
+
+                        // 显示结果
+                        app.chat_history.add_message(crate::core::message::Message {
+                            role: crate::core::message::Role::System,
+                            content: result.message.clone(),
+                        });
+
+                        // 如果有备份信息，显示它
+                        if let Some(backup_path) = result.backup_path {
+                            app.chat_history.add_message(crate::core::message::Message {
+                                role: crate::core::message::Role::System,
+                                content: format!("💾 备份已创建: {}", backup_path.display()),
+                            });
+                        }
+
+                        app.scroll_to_bottom();
+                    }
+                    return AppAction::None;
+                }
+                KeyCode::Esc => {
+                    // 取消选择
+                    app.filename_suggestion.hide();
+                    app.chat_history.add_message(crate::core::message::Message {
+                        role: crate::core::message::Role::System,
+                        content: "❌ 已取消文件创建".to_string(),
+                    });
+                    app.scroll_to_bottom();
+                    return AppAction::None;
+                }
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    // Ctrl+C 也取消
+                    app.filename_suggestion.hide();
+                    return AppAction::None;
+                }
+                _ => return AppAction::None, // 在对话框显示时，其他按键无效
+            }
+        }
+
         // 次优先级：处理文件命令确认对话
         if app.file_command_handler.has_pending_confirmation() {
             match key.code {

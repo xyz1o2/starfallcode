@@ -7,6 +7,7 @@ mod utils;
 mod prompts;
 mod commands;
 mod tools;
+mod fs;
 
 use crate::app::App;
 use crossterm::{
@@ -28,6 +29,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create app instance
     let mut app = App::new();
+
+    // Set project root to current directory
+    let current_dir = std::env::current_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    app.file_search.set_root(current_dir);
+    eprintln!("📁 Project root: {}", app.file_search.root_path.display());
 
     // Build file search cache at startup (like Gemini CLI's list_directory)
     // This ensures fast file lookups when user types @

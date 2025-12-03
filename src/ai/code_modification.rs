@@ -258,12 +258,12 @@ impl AICodeModificationDetector {
     pub fn detect_implicit_modifications(response: &str) -> Vec<CodeModificationOp> {
         let code_blocks = Self::extract_code_blocks(response);
         let mut operations = Vec::new();
-        
+
         // 如果有代码块，检查是否有隐含的修改意图
         if !code_blocks.is_empty() {
-            // 检查是否提到了文件名或路径（如 index.html, main.rs 等）
+            // 模式1: 提到了文件名或路径（如 index.html, main.rs 等）
             let file_pattern = Regex::new(r"(?:file|path|save|write|create|add).*?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)").unwrap();
-            
+
             for cap in file_pattern.captures_iter(response) {
                 if let Some(path_match) = cap.get(1) {
                     let path = path_match.as_str().to_string();
@@ -276,8 +276,48 @@ impl AICodeModificationDetector {
                     }
                 }
             }
+
+            // 模式2: 检测到代码生成意图但没有文件名（用户说"写代码"、"写个demo"等）
+            if operations.is_empty() {
+                let intent_pattern = Regex::new(r"(?i)(write|create|generate|make|build|develop|code).*?(?:demo|example|sample|test|app|application|code|project|文件|代码|项目)").unwrap();
+
+                if intent_pattern.is_match(response) {
+                    // 用户有代码生成意图但没有指定文件名
+                    // 为每个代码块创建待定操作，文件名留空
+                    for (i, block) in code_blocks.iter().enumerate() {
+                        let extension = match block.language.as_str() {
+                            "rust" => "rs",
+                            "python" => "py",
+                            "javascript" => "js",
+                            "typescript" => "ts",
+                            "html" => "html",
+                            "css" => "css",
+                            "go" => "go",
+                            "java" => "java",
+                            _ => match block.content.contains("fn ") || block.content.contains("use ") {
+                                true => "rs",
+                                false => match block.content.contains("<!DOCTYPE html") {
+                                    true => "html",
+                                    false => "txt",
+                                }
+                            },
+                        };
+
+                        let suggested_name = match i {
+                            0 => format!("main.{}", extension),
+                            _ => format!("component_{}.{}", i + 1, extension),
+                        };
+
+                        operations.push(CodeModificationOp::Modify {
+                            path: format!("UNSPECIFIED_{}", suggested_name), // 标记为未指定
+                            search: String::new(),
+                            replace: block.content.clone(),
+                        });
+                    }
+                }
+            }
         }
-        
+
         operations
     }
 

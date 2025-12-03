@@ -9,6 +9,9 @@ use crate::ui::command_hints::CommandHints;
 use crate::commands::file_commands::FileCommandHandler;
 use crate::prompts;
 use crate::ai::code_modification::{AICodeModificationDetector, CodeModificationOp, CodeDiff, CodeMatcher};
+use crate::core::vibe_coding::{VibeWorkflowManager, VibeStage};
+use crate::commands::VibeCommandHandler;
+use crate::ui::filename_suggestion::FilenameSuggestion;
 use ratatui::{Frame, widgets::ScrollbarState};
 use std::sync::{Arc, Mutex};
 use crate::ui;
@@ -134,36 +137,36 @@ pub struct App {
     pub streaming_response: Arc<Mutex<StreamingChatResponse>>,
     pub command_hints: CommandHints,
     pub file_command_handler: FileCommandHandler,
-    
+
     // AI 代码修改确认相关
     pub pending_modifications: Vec<(CodeModificationOp, Option<CodeDiff>)>,
     pub modification_confirmation_pending: bool,
     pub modification_selected_index: usize,
     pub modification_choice: ModificationChoice,
-    
+
     // 聊天历史滚动
     pub chat_scroll_offset: usize,
     pub scrollbar_state: ScrollbarState,
-    
+
     // Action 系统
     pub action_queue: ActionQueue,
-    
+
     // 输入框滚动
     pub input_scroll_offset: usize,
-    
+
     // 鼠标选择
     pub selected_text: String,
     pub selection_end: Option<(u16, u16)>,
-    
+
     // @ 提及建议
     pub mention_suggestions: crate::ui::mention_suggestions::MentionSuggestions,
-    
+
     // 文件搜索引擎
     pub file_search: crate::ui::file_search::FileSearchEngine,
-    
+
     // 高效渲染引擎
     pub render_engine: crate::ui::render_engine::RenderEngine,
-    
+
     // 动画帧计数
     pub frame_count: u32,
 
@@ -172,9 +175,21 @@ pub struct App {
 
     // Conversation Engine
     pub conversation_engine: ConversationEngine,
-    
+
     // ChatOrchestrator - 统一的对话编排器
     pub chat_orchestrator: Option<ChatOrchestrator>,
+
+    // Vibe Coding Workflow Manager (5阶段工作流)
+    pub vibe_workflow: VibeWorkflowManager,
+
+    // Vibe Coding 命令处理器
+    pub vibe_command_handler: VibeCommandHandler,
+
+    // 文件名建议对话框（当AI检测到代码生成意图但未指定文件名时）
+    pub filename_suggestion: FilenameSuggestion,
+
+    // AI Agent - 类似 grok-cli 的 GrokAgent，支持工具调用
+    pub ai_agent: Option<crate::core::AIAgent>,
 }
 
 impl App {
@@ -208,6 +223,10 @@ impl App {
             gemini: GeminiArchitecture::new(),
             conversation_engine: ConversationEngine::new(),
             chat_orchestrator: None,
+            vibe_workflow: VibeWorkflowManager::new(),
+            vibe_command_handler: VibeCommandHandler::new(),
+            filename_suggestion: FilenameSuggestion::new(),
+            ai_agent: None,
         }
     }
 
@@ -226,7 +245,23 @@ impl App {
             // 设置 GeminiArchitecture 的 LLM 客户端
             self.gemini.set_llm_client(client.clone());
             // 初始化 ChatOrchestrator
-            self.chat_orchestrator = Some(ChatOrchestrator::new(client));
+            self.chat_orchestrator = Some(ChatOrchestrator::new(client.clone()));
+
+            // 初始化 AI Agent（类似 grok-cli 的 GrokAgent）
+            let agent_config = crate::core::AIAgentConfig {
+                max_tool_rounds: 50,
+                model: config.model.clone(),
+                enable_search: false,
+            };
+            let ai_agent = crate::core::AIAgent::new(client, agent_config);
+
+            // 注册标准工具
+            let agent_clone = ai_agent.clone();
+            tokio::spawn(async move {
+                agent_clone.register_standard_tools().await;
+            });
+
+            self.ai_agent = Some(ai_agent);
         }
     }
 
@@ -365,17 +400,40 @@ impl App {
     }
 
     async fn handle_command(&mut self, input: &str) {
-        // 首先尝试解析为文件命令
+        // 首先尝试解析为vibe命令（/vibc）
+        if let Ok(vibe_cmd) = crate::commands::VibeCommandHandler::parse(input) {
+            let result = self.vibe_command_handler.execute(vibe_cmd);
+
+            // 显示命令结果
+            self.chat_history.add_message(Message {
+                role: Role::System,
+                content: format!("[vibc] {}", result.message),
+            });
+            self.scroll_to_bottom();
+
+            // 如果有额外数据，显示它
+            if let Some(data) = result.data {
+                self.chat_history.add_message(Message {
+                    role: Role::System,
+                    content: data,
+                });
+                self.scroll_to_bottom();
+            }
+
+            return;
+        }
+
+        // 其次尝试解析为文件命令
         if let Some(file_cmd) = FileCommandHandler::parse_command(input) {
             let result = self.file_command_handler.execute(file_cmd);
-            
+
             // 显示命令结果
             self.chat_history.add_message(Message {
                 role: Role::System,
                 content: result.message.clone(),
             });
             self.scroll_to_bottom();
-            
+
             // 如果有 Diff 对比，显示它
             if let Some(diff) = result.diff {
                 let diff_content = format!(
@@ -390,11 +448,11 @@ impl App {
                 });
                 self.scroll_to_bottom();
             }
-            
+
             return;
         }
 
-        // 其次尝试解析为普通命令
+        // 再次尝试解析为普通命令
         if let Some(cmd) = CommandParser::parse(input) {
             let response = match cmd.command_type {
                 CommandType::Help => CommandParser::get_help_text(),
@@ -418,14 +476,48 @@ impl App {
     pub fn process_ai_response_for_modifications(&mut self, response: &str) {
         // 首先检测明确的修改指令
         let mut ops = AICodeModificationDetector::detect_modifications(response);
-        
+
         // 如果没有明确指令，检测隐含的修改意图
         if ops.is_empty() {
             ops = AICodeModificationDetector::detect_implicit_modifications(response);
         }
-        
+
         if ops.is_empty() {
             return;
+        }
+
+        // 检查是否有未指定文件名的操作（需要用户确认）
+        let mut needs_filename_confirmation = false;
+        for op in &ops {
+            if let CodeModificationOp::Modify { path, search: _, replace: _ } = op {
+                if path.starts_with("UNSPECIFIED_") {
+                    needs_filename_confirmation = true;
+                    break;
+                }
+            }
+        }
+
+        if needs_filename_confirmation {
+            // ✅ 显示文件名建议对话框，让用户选择
+            // 提取代码内容和语言
+            let mut unspecified_content = String::new();
+            let mut detected_language = String::new();
+
+            for op in &ops {
+                if let CodeModificationOp::Modify { path, search: _, replace } = op {
+                    if path.starts_with("UNSPECIFIED_") {
+                        unspecified_content = replace.clone();
+                        // 从路径中提取语言（如 UNSPECIFIED_main.rs -> rs）
+                        if let Some(ext_start) = path.rfind('.') {
+                            detected_language = path[ext_start + 1..].to_string();
+                        }
+                        break;
+                    }
+                }
+            }
+
+            self.filename_suggestion.show(unspecified_content, detected_language);
+            return; // 不进入修改确认流程，让用户通过对话框选择
         }
 
         // 为每个修改操作生成 Diff
@@ -473,7 +565,7 @@ impl App {
             self.modification_confirmation_pending = true;
             self.modification_selected_index = 0;
             self.modification_choice = ModificationChoice::Confirm;
-            
+
             // 确认对话现在作为独立的 UI 层显示，不添加到聊天历史
         }
     }

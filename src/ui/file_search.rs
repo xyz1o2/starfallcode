@@ -7,6 +7,7 @@ pub struct FileSearchEngine {
     pub query: String,
     pub results: Vec<String>,
     pub selected_index: usize,
+    pub root_path: PathBuf,
     pub cache: Vec<PathBuf>,  // 缓存所有文件
     pub cache_built: bool,
 }
@@ -17,9 +18,16 @@ impl FileSearchEngine {
             query: String::new(),
             results: Vec::new(),
             selected_index: 0,
+            root_path: PathBuf::from("."),
             cache: Vec::new(),
             cache_built: false,
         }
+    }
+
+    /// 设置根路径（项目根目录）
+    pub fn set_root(&mut self, root: PathBuf) {
+        self.root_path = root;
+        self.cache_built = false; // 需要重新构建缓存
     }
 
     /// 构建文件缓存 - 应用启动时调用一次
@@ -34,10 +42,10 @@ impl FileSearchEngine {
         }
 
         self.cache.clear();
-        
+
         // 使用 ignore crate 遍历文件，自动跳过 .gitignore 中的文件
         // 这与 Gemini CLI 的 list_directory 工具类似
-        let walker = WalkBuilder::new(".")
+        let walker = WalkBuilder::new(&self.root_path)
             .hidden(true)            // 隐藏隐藏文件（.git, .env 等）
             .ignore(true)            // 尊重 .gitignore
             .git_ignore(true)        // 尊重 .gitignore
@@ -48,9 +56,9 @@ impl FileSearchEngine {
             if let Ok(entry) = result {
                 let path = entry.path().to_path_buf();
                 let path_str = path.to_string_lossy();
-                
+
                 // 跳过 target 和 .git 目录中的内容
-                if !path_str.contains("target/") 
+                if !path_str.contains("target/")
                     && !path_str.contains("target\\")
                     && !path_str.contains(".git/")
                     && !path_str.contains(".git\\") {

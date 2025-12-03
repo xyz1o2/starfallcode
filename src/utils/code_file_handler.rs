@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::fs;
+use crate::fs::file_ops::{SafeFileOps, FileOpResult};
 
 /// 代码文件信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +39,7 @@ pub struct FileOperationResult {
     pub success: bool,
     pub message: String,
     pub data: Option<String>,
+    pub backup_path: Option<PathBuf>,
 }
 
 impl FileOperationResult {
@@ -46,6 +48,16 @@ impl FileOperationResult {
             success: true,
             message,
             data,
+            backup_path: None,
+        }
+    }
+
+    pub fn success_with_backup(message: String, data: Option<String>, backup: Option<PathBuf>) -> Self {
+        Self {
+            success: true,
+            message,
+            data,
+            backup_path: backup,
         }
     }
 
@@ -54,6 +66,7 @@ impl FileOperationResult {
             success: false,
             message,
             data: None,
+            backup_path: None,
         }
     }
 }
@@ -61,11 +74,24 @@ impl FileOperationResult {
 /// 代码文件处理器
 pub struct CodeFileHandler {
     yolo_mode: bool,
+    safe_ops: SafeFileOps,
 }
 
 impl CodeFileHandler {
     pub fn new() -> Self {
-        Self { yolo_mode: false }
+        // 默认启用备份和 Git 集成
+        Self {
+            yolo_mode: false,
+            safe_ops: SafeFileOps::new(true, true),
+        }
+    }
+
+    /// 配置 SafeFileOps 选项
+    pub fn with_options(enable_backups: bool, enable_git: bool) -> Self {
+        Self {
+            yolo_mode: false,
+            safe_ops: SafeFileOps::new(enable_backups, enable_git),
+        }
     }
 
     /// 启用 YOLO 模式
@@ -89,49 +115,92 @@ impl CodeFileHandler {
         }
     }
 
-    /// 写入文件
+    /// 写入文件（带备份和 Git 集成）
     pub fn write_file(&self, path: &str, content: &str) -> FileOperationResult {
-        match fs::write(path, content) {
-            Ok(_) => FileOperationResult::success(
-                format!("File written successfully: {}", path),
-                None,
-            ),
+        // 在 YOLO 模式下，直接写入（如果 SafeFileOps 已配置）
+        // 否则需要确认
+        match self.safe_ops.write_file(path, content) {
+            Ok(result) => {
+                if result.success {
+                    FileOperationResult::success_with_backup(
+                        result.message,
+                        None,
+                        result.backup_path,
+                    )
+                } else {
+                    FileOperationResult::error(result.message)
+                }
+            }
             Err(e) => FileOperationResult::error(format!("Failed to write file: {}", e)),
         }
     }
 
-    /// 创建文件
-    pub fn create_file(&self, path: &str, content: &str) -> FileOperationResult {
-        let path_obj = Path::new(path);
-
-        // 创建父目录
-        if let Some(parent) = path_obj.parent() {
-            if parent != Path::new("") {
-                if let Err(e) = fs::create_dir_all(parent) {
-                    return FileOperationResult::error(format!("Failed to create directory: {}", e));
+    /// 修改文件（搜索并替换，带备份和 Git 集成）
+    pub fn modify_file(&self, path: &str, search: &str, replace: &str) -> FileOperationResult {
+        match self.safe_ops.modify_file(path, search, replace) {
+            Ok(result) => {
+                if result.success {
+                    FileOperationResult::success_with_backup(
+                        result.message,
+                        None,
+                        result.backup_path,
+                    )
+                } else {
+                    FileOperationResult::error(result.message)
                 }
             }
+            Err(e) => FileOperationResult::error(format!("Failed to modify file: {}", e)),
         }
+    }
+
+    /// 创建文件（带备份和 Git 集成）
+    pub fn create_file(&self, path: &str, content: &str) -> FileOperationResult {
+        let path_obj = Path::new(path);
 
         // 检查文件是否已存在
         if path_obj.exists() {
             return FileOperationResult::error(format!("File already exists: {}", path));
         }
 
-        self.write_file(path, content)
+        // SafeFileOps.write_file 会自动创建父目录
+        match self.safe_ops.write_file(path, content) {
+            Ok(result) => {
+                if result.success {
+                    FileOperationResult::success_with_backup(
+                        format!("File created successfully: {}", path),
+                        None,
+                        result.backup_path,
+                    )
+                } else {
+                    FileOperationResult::error(result.message)
+                }
+            }
+            Err(e) => FileOperationResult::error(format!("Failed to create file: {}", e)),
+        }
     }
 
-    /// 删除文件（需要确认）
+    /// 删除文件（带备份和 Git 集成）
     pub fn delete_file(&self, path: &str, confirmed: bool) -> FileOperationResult {
-        if !self.yolo_mode && !confirmed {
-            return FileOperationResult::error(
-                "Deletion requires confirmation. Use confirmed=true or enable YOLO mode".to_string(),
-            );
-        }
-
-        match fs::remove_file(path) {
-            Ok(_) => FileOperationResult::success(format!("File deleted: {}", path), None),
-            Err(e) => FileOperationResult::error(format!("Failed to delete file: {}", e)),
+        // YOLO 模式或已确认，执行删除
+        if self.yolo_mode || confirmed {
+            match self.safe_ops.delete_file(path) {
+                Ok(result) => {
+                    if result.success {
+                        FileOperationResult::success_with_backup(
+                            result.message,
+                            None,
+                            result.backup_path,
+                        )
+                    } else {
+                        FileOperationResult::error(result.message)
+                    }
+                }
+                Err(e) => FileOperationResult::error(format!("Failed to delete file: {}", e)),
+            }
+        } else {
+            FileOperationResult::error(
+                "Deletion requires confirmation. Enable YOLO mode or confirm deletion".to_string(),
+            )
         }
     }
 

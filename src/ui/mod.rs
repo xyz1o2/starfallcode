@@ -23,6 +23,9 @@ pub mod pixel_layout_v2;
 pub mod avatar;
 pub mod svg_avatar;
 pub mod smart_chat_display;
+pub mod vibe_panel;
+pub mod filename_suggestion;
+pub mod input_area;
 
 // pub use smart_chat_display::{
 //     SmartChatDisplay, SmartMessage, MessageRole, MessageType,

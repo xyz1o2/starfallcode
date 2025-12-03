@@ -7,6 +7,8 @@ pub enum FileCommand {
     CreateFile { path: String, content: Option<String> },
     /// 修改文件: /modify-file <path> <content>
     ModifyFile { path: String, content: String },
+    /// 搜索替换修改: /modify-file-search <path> <search> <replace>
+    ModifyFileSearch { path: String, search: String, replace: String },
     /// 确认修改: /confirm-modify
     ConfirmModify,
     /// 取消修改: /cancel-modify
@@ -102,6 +104,11 @@ impl FileCommandHandler {
         self.file_handler.disable_yolo_mode();
     }
 
+    /// 获取文件处理器（用于直接文件操作）
+    pub fn file_handler(&self) -> &CodeFileHandler {
+        &self.file_handler
+    }
+
     /// 解析命令字符串
     pub fn parse_command(input: &str) -> Option<FileCommand> {
         let parts: Vec<&str> = input.trim().split_whitespace().collect();
@@ -129,6 +136,15 @@ impl FileCommandHandler {
                 let path = parts[1].to_string();
                 let content = parts[2..].join(" ");
                 Some(FileCommand::ModifyFile { path, content })
+            }
+            "/modify-file-search" => {
+                if parts.len() < 4 {
+                    return None;
+                }
+                let path = parts[1].to_string();
+                let search = parts[2].to_string();
+                let replace = parts[3..].join(" ");
+                Some(FileCommand::ModifyFileSearch { path, search, replace })
             }
             "/delete-file" => {
                 if parts.len() < 2 {
@@ -192,7 +208,7 @@ impl FileCommandHandler {
                 let read_result = self.file_handler.read_file(&path);
                 if read_result.success {
                     let old_content = read_result.data.unwrap_or_default();
-                    
+
                     // 如果启用 YOLO 模式，直接修改
                     if self.yolo_mode {
                         let write_result = self.file_handler.write_file(&path, &content);
@@ -234,6 +250,32 @@ impl FileCommandHandler {
                     FileCommandResult {
                         success: false,
                         message: format!("❌ 读取文件失败: {}", read_result.message),
+                        content: None,
+                        requires_confirmation: false,
+                        diff: None,
+                    }
+                }
+            }
+            FileCommand::ModifyFileSearch { path, search, replace } => {
+                // 使用搜索替换方式修改文件
+                let modify_result = self.file_handler.modify_file(&path, &search, &replace);
+                if modify_result.success {
+                    let backup_info = if let Some(backup) = &modify_result.backup_path {
+                        format!(" (备份: {})", backup.display())
+                    } else {
+                        String::new()
+                    };
+                    FileCommandResult {
+                        success: true,
+                        message: format!("✅ 文件已修改{}: {}", backup_info, path),
+                        content: None,
+                        requires_confirmation: false,
+                        diff: None,
+                    }
+                } else {
+                    FileCommandResult {
+                        success: false,
+                        message: format!("❌ 修改文件失败: {}", modify_result.message),
                         content: None,
                         requires_confirmation: false,
                         diff: None,

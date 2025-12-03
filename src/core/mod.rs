@@ -21,6 +21,8 @@ pub mod logger;
 pub mod performance_optimizer;
 pub mod chat_orchestrator;
 pub mod health_check;
+pub mod vibe_coding;
+pub mod ai_agent;
 
 pub use conversation_engine::{ConversationEngine, ConversationContext, UserIntent};
 
@@ -35,3 +37,4 @@ pub use streaming_optimizer::StreamingOptimizer;
 pub use token_calculator::TokenCalculator;
 pub use context_optimizer::ContextWindowOptimizer;
 pub use chat_orchestrator::ChatOrchestrator;
+pub use ai_agent::{AIAgent, AIAgentConfig, AgentResponse, AgentStatus, convert_to_chat_messages};

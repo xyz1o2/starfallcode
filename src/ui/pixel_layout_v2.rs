@@ -11,6 +11,7 @@ use ratatui::{
 use crate::app::App;
 use crate::core::message::Role as AppRole;
 use crate::ui::avatar::PixelData;
+use crate::ui::input_area::render_input_area;
 use std::collections::HashMap;
 
 // ============================================================================
@@ -336,42 +337,3 @@ fn render_status_bar(f: &mut Frame, area: Rect, _theme: &Theme) {
     f.render_widget(para, area);
 }
 
-/// 渲染输入区域
-fn render_input_area(f: &mut Frame, app: &App, area: Rect, theme: &Theme) {
-    // 背景
-    f.render_widget(Paragraph::new("").style(Style::default().bg(Color::Rgb(8, 8, 8))), area);
-    
-    // 水平分割:箭头 | 输入框
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(2),   // 箭头
-            Constraint::Min(10),     // 输入框
-        ])
-        .split(area);
-
-    // 1. 渲染箭头
-    let arrow = "▶";
-    f.render_widget(
-        Paragraph::new(arrow).style(
-            Style::default()
-                .fg(theme.accent_user)
-                .add_modifier(Modifier::BOLD),
-        ),
-        chunks[0],
-    );
-
-    // 2. 渲染输入框
-    let input_widget = Paragraph::new(app.input_text.as_str()).style(Style::default().fg(Color::White));
-    f.render_widget(input_widget, chunks[1]);
-
-    // 3. 计算并设置光标位置
-    // 光标应该在输入文本的当前光标位置
-    let cursor_col = app.input_cursor as u16;
-    
-    // 设置光标位置 (x = 输入区域起始 + 光标偏移, y = 输入区域起始)
-    f.set_cursor(
-        chunks[1].x + cursor_col,
-        chunks[1].y,
-    );
-}
