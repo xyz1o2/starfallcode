@@ -58,12 +58,19 @@ impl GrokClient {
             .and_then(|val| val.parse().ok())
             .unwrap_or(1536);
 
+        // Create HTTP client with timeout
+        let http_client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .connect_timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
         Self {
             api_key: api_key.to_string(),
             base_url: base_url.unwrap_or_else(|| "https://api.x.ai/v1".to_string()),
             model: model.unwrap_or_else(|| "grok-code-fast-1".to_string()),
             is_openai_compatible: is_openai_compatible.unwrap_or(false),
-            http_client: reqwest::Client::new(),
+            http_client,
             default_max_tokens,
         }
     }
@@ -95,22 +102,54 @@ impl GrokClient {
             search_options,
         );
 
-        let response = self
-            .http_client
-            .post(format!("{}/chat/completions", self.base_url))
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .json(&request_payload)
-            .send()
-            .await?;
+        // Retry logic with exponential backoff
+        let mut retries = 0;
+        let max_retries = 3;
+        
+        loop {
+            match self
+                .http_client
+                .post(format!("{}/chat/completions", self.base_url))
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .json(&request_payload)
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    if !response.status().is_success() {
+                        let status = response.status();
+                        let error_text = response.text().await.unwrap_or_default();
+                        
+                        // Retry on server errors (5xx) and rate limits (429)
+                        if (status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS) && retries < max_retries {
+                            retries += 1;
+                            let wait_time = std::time::Duration::from_secs(2_u64.pow(retries as u32));
+                            eprintln!("⚠️  API error ({}). Retrying in {:?}...", status, wait_time);
+                            tokio::time::sleep(wait_time).await;
+                            continue;
+                        }
+                        
+                        return Err(format!("Grok API error ({}): {}", status, error_text).into());
+                    }
 
-        if !response.status().is_success() {
-            let error_text = response.text().await?;
-            return Err(format!("Grok API error: {}", error_text).into());
+                    let response: GrokResponse = response.json().await?;
+                    return Ok(response);
+                }
+                Err(e) => {
+                    // Retry on timeout and connection errors
+                    if (e.is_timeout() || e.is_connect()) && retries < max_retries {
+                        retries += 1;
+                        let wait_time = std::time::Duration::from_secs(2_u64.pow(retries as u32));
+                        eprintln!("⚠️  Connection error: {}. Retrying in {:?}...", e, wait_time);
+                        tokio::time::sleep(wait_time).await;
+                        continue;
+                    }
+                    
+                    return Err(Box::new(e));
+                }
+            }
         }
-
-        let response: GrokResponse = response.json().await?;
-        Ok(response)
     }
 
     pub async fn chat_stream(
