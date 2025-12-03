@@ -1,11 +1,11 @@
 use crate::grok::client::GrokClient;
-use crate::types::{ChatEntry, ChatEntryType, GrokMessage, GrokTool, GrokToolCall, ToolResult, StreamingChunk, StreamingChunkType, GrokToolCallFunction};
+use crate::types::{ChatEntry, ChatEntryType, GrokMessage, GrokTool, GrokToolCall, GrokToolCallFunction, ToolResult, StreamingChunk, StreamingChunkType};
 use crate::tools::{TextEditorTool, BashTool, TodoTool, SearchTool, ConfirmationTool, MorphEditorTool};
 use std::collections::HashMap;
 use std::pin::Pin;
 use futures::Stream;
-use tokio;
 
+#[derive(Clone)]
 pub struct GrokAgent {
     grok_client: GrokClient,
     text_editor: TextEditorTool,
@@ -919,10 +919,155 @@ Current working directory: ".to_string() + &std::env::current_dir()?.to_string_l
         &mut self,
         message: &str,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamingChunk, Box<dyn std::error::Error + Send>>> + Send>>, Box<dyn std::error::Error + Send>> {
-        // For now, return an error as streaming implementation is complex
-        // This would involve handling the streaming response from the Grok API
-        // and converting it to StreamingChunk items
-        Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Streaming not fully implemented yet")))
+        // Add user message to conversation
+        self.messages.push(GrokMessage {
+            role: "user".to_string(),
+            content: Some(message.to_string()),
+            tool_calls: None,
+            tool_call_id: None,
+        });
+
+        let user_entry = ChatEntry {
+            entry_type: ChatEntryType::User,
+            content: message.to_string(),
+            timestamp: chrono::Utc::now(),
+            tool_calls: None,
+            tool_call: None,
+            tool_result: None,
+            is_streaming: Some(true),
+        };
+        self.chat_history.push(user_entry);
+
+        // Get all available tools
+        let tools = self.get_all_tools().await;
+
+        // Get streaming response from the client
+        let stream = self.grok_client.chat_stream(
+            self.messages.clone(),
+            Some(tools),
+            None,
+            None,
+        ).await?;
+
+        use async_stream::stream;
+        use futures::stream::StreamExt;
+
+        let stream = Box::pin(stream! {
+            let mut stream_pinned = std::pin::pin!(stream);
+            let mut accumulated_content = String::new();
+            let mut accumulated_tool_calls: Vec<GrokToolCall> = Vec::new();
+            let mut current_tool_call_index: Option<usize> = None;
+            
+            while let Some(result) = stream_pinned.next().await {
+                match result {
+                    Ok(json) => {
+                        // Parse the streaming response
+                        if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
+                            for choice in choices {
+                                if let Some(delta) = choice.get("delta") {
+                                    // Handle content streaming
+                                    if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
+                                        if !content.is_empty() {
+                                            accumulated_content.push_str(content);
+                                            
+                                            // Emit content chunk
+                                            yield Ok(StreamingChunk {
+                                                chunk_type: StreamingChunkType::Content,
+                                                content: Some(content.to_string()),
+                                                tool_calls: None,
+                                                tool_call: None,
+                                                tool_result: None,
+                                                token_count: None,
+                                            });
+                                        }
+                                    }
+
+                                    // Handle tool calls
+                                    if let Some(tool_calls) = delta.get("tool_calls").and_then(|tc| tc.as_array()) {
+                                        for (idx, tool_call) in tool_calls.iter().enumerate() {
+                                            if let Some(index) = tool_call.get("index").and_then(|i| i.as_u64()) {
+                                                current_tool_call_index = Some(index as usize);
+                                                
+                                                if accumulated_tool_calls.len() <= index as usize {
+                                                    accumulated_tool_calls.resize(index as usize + 1, GrokToolCall {
+                                                        id: uuid::Uuid::new_v4().to_string(),
+                                                        call_type: "function".to_string(),
+                                                        function: GrokToolCallFunction {
+                                                            name: String::new(),
+                                                            arguments: String::new(),
+                                                        },
+                                                    });
+                                                }
+
+                                                let tool_call_ref = &mut accumulated_tool_calls[index as usize];
+
+                                                if let Some(id) = tool_call.get("id").and_then(|i| i.as_str()) {
+                                                    tool_call_ref.id = id.to_string();
+                                                }
+
+                                                if let Some(function) = tool_call.get("function") {
+                                                    if let Some(name) = function.get("name").and_then(|n| n.as_str()) {
+                                                        tool_call_ref.function.name = name.to_string();
+                                                    }
+                                                    if let Some(arguments) = function.get("arguments").and_then(|a| a.as_str()) {
+                                                        tool_call_ref.function.arguments.push_str(arguments);
+                                                    }
+                                                }
+
+                                                // Emit tool call chunk
+                                                yield Ok(StreamingChunk {
+                                                    chunk_type: StreamingChunkType::ToolCalls,
+                                                    content: None,
+                                                    tool_calls: Some(vec![tool_call_ref.clone()]),
+                                                    tool_call: None,
+                                                    tool_result: None,
+                                                    token_count: None,
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Check for finish_reason
+                                if let Some(finish_reason) = choice.get("finish_reason").and_then(|fr| fr.as_str()) {
+                                    if finish_reason == "stop" || finish_reason == "tool_calls" {
+                                        // Emit done chunk
+                                        yield Ok(StreamingChunk {
+                                            chunk_type: StreamingChunkType::Done,
+                                            content: Some(accumulated_content.clone()),
+                                            tool_calls: if accumulated_tool_calls.is_empty() { None } else { Some(accumulated_tool_calls.clone()) },
+                                            tool_call: None,
+                                            tool_result: None,
+                                            token_count: None,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+
+                        // Check for usage (token count)
+                        if let Some(usage) = json.get("usage") {
+                            if let Some(total_tokens) = usage.get("total_tokens").and_then(|t| t.as_u64()) {
+                                yield Ok(StreamingChunk {
+                                    chunk_type: StreamingChunkType::TokenCount,
+                                    content: None,
+                                    tool_calls: None,
+                                    tool_call: None,
+                                    tool_result: None,
+                                    token_count: Some(total_tokens as u32),
+                                });
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        yield Err(e);
+                        break;
+                    }
+                }
+            }
+        });
+
+        Ok(stream)
     }
 
     pub fn get_chat_history(&self) -> &Vec<ChatEntry> {

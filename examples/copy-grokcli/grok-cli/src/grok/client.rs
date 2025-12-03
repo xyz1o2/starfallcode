@@ -1,9 +1,9 @@
-use crate::types::{GrokMessage, GrokTool, GrokToolCall, GrokToolCallFunction};
+use crate::types::{GrokMessage, GrokTool};
 use reqwest;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::pin::Pin;
 use futures::Stream;
+use async_stream::stream;
 
 #[derive(Debug)]
 pub struct GrokClient {
@@ -159,9 +159,89 @@ impl GrokClient {
         model: Option<String>,
         search_options: Option<SearchOptions>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<serde_json::Value, Box<dyn std::error::Error + Send>>> + Send>>, Box<dyn std::error::Error + Send>> {
-        // For now, return an error as streaming implementation requires external dependencies
-        // like reqwest-eventsource which may have compatibility issues in this context
-        Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Streaming not fully implemented yet")))
+        // Check if we have a valid API key
+        if self.api_key == "API_KEY_NOT_SET" {
+            return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "No API key set. Please configure your API key.")));
+        }
+
+        let request_payload = self.create_request_payload(
+            model.as_deref().unwrap_or(&self.model),
+            messages,
+            tools,
+            search_options,
+        );
+
+        // Add stream parameter to payload
+        let mut payload = request_payload;
+        payload["stream"] = serde_json::Value::Bool(true);
+
+        let api_key = self.api_key.clone();
+        let base_url = self.base_url.clone();
+        let http_client = self.http_client.clone();
+
+        let stream = Box::pin(stream! {
+            let response = match http_client
+                .post(format!("{}/chat/completions", base_url))
+                .header("Authorization", format!("Bearer {}", api_key))
+                .header("Content-Type", "application/json")
+                .json(&payload)
+                .send()
+                .await
+            {
+                Ok(resp) => resp,
+                Err(e) => {
+                    yield Err(Box::new(e) as Box<dyn std::error::Error + Send>);
+                    return;
+                }
+            };
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let error_text = response.text().await.unwrap_or_default();
+                let error_msg = format!("Grok API error ({}): {}", status, error_text);
+                yield Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_msg)) as Box<dyn std::error::Error + Send>);
+                return;
+            }
+
+            // Read the response body and parse SSE format
+            let body = match response.text().await {
+                Ok(b) => b,
+                Err(e) => {
+                    yield Err(Box::new(e) as Box<dyn std::error::Error + Send>);
+                    return;
+                }
+            };
+
+            for line in body.lines() {
+                let line = line.trim();
+                
+                if line.is_empty() || line.starts_with(':') {
+                    // Skip empty lines and comments
+                    continue;
+                }
+                
+                if line == "[DONE]" {
+                    // Stream finished
+                    break;
+                }
+                
+                if line.starts_with("data: ") {
+                    let data = &line[6..];
+                    
+                    // Try to parse the data as JSON
+                    match serde_json::from_str::<serde_json::Value>(data) {
+                        Ok(json) => {
+                            yield Ok(json);
+                        }
+                        Err(_) => {
+                            // Ignore parse errors for individual chunks
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(stream)
     }
 
     pub async fn search(

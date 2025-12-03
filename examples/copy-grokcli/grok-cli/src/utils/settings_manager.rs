@@ -75,7 +75,7 @@ impl SettingsManager {
         }
     }
 
-    pub async fn migrate_settings(&self, mut settings: UserSettings, from_version: u32) -> Result<UserSettings, Box<dyn std::error::Error>> {
+    pub async fn migrate_settings(&self, settings: UserSettings, from_version: u32) -> Result<UserSettings, Box<dyn std::error::Error>> {
         let mut migrated = settings;
 
         // Migration from version 1 to 2: Add new Grok 4.1 and Grok 4 Fast models

@@ -1,9 +1,8 @@
 use crate::types::{EditorCommand, EditorCommandType, ToolResult};
-use tokio::fs;
-use std::path::Path;
 use std::process::Command;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+use tokio::fs;
+use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodoItem {
@@ -13,6 +12,7 @@ pub struct TodoItem {
     pub priority: String, // 'high', 'medium', 'low'
 }
 
+#[derive(Clone)]
 pub struct TodoTool {
     todos: Vec<TodoItem>,
 }
@@ -180,6 +180,7 @@ pub struct TodoUpdate {
     pub priority: Option<String>,
 }
 
+#[derive(Clone)]
 pub struct TextEditorTool {
     edit_history: Vec<EditorCommand>,
 }
@@ -354,6 +355,7 @@ impl TextEditorTool {
     }
 }
 
+#[derive(Clone)]
 pub struct BashTool {
     current_directory: String,
 }
@@ -368,7 +370,7 @@ impl BashTool {
         }
     }
 
-    pub async fn execute(&mut self, command: &str, timeout: Option<u64>) -> Result<ToolResult, Box<dyn std::error::Error>> {
+    pub async fn execute(&mut self, command: &str, _timeout: Option<u64>) -> Result<ToolResult, Box<dyn std::error::Error>> {
         // Handle cd commands specially
         if command.starts_with("cd ") {
             let new_dir = command[3..].trim();
@@ -471,6 +473,7 @@ pub struct UnifiedSearchResult {
     pub score: Option<u32>,
 }
 
+#[derive(Clone)]
 pub struct SearchTool {
     current_directory: String,
 }
@@ -737,9 +740,6 @@ impl SearchTool {
         include_hidden: Option<bool>,
         exclude_pattern: Option<&str>,
     ) -> Result<Vec<FileSearchResult>, Box<dyn std::error::Error>> {
-        use tokio::fs;
-        use std::path::Path;
-
         let max_results = max_results.unwrap_or(50) as usize;
         let mut files = Vec::new();
         let search_pattern = pattern.to_lowercase();
@@ -814,7 +814,7 @@ impl SearchTool {
         &self,
         results: &[UnifiedSearchResult],
         query: &str,
-        search_type: &str,
+        _search_type: &str,
     ) -> String {
         if results.is_empty() {
             return format!("No results found for \"{}\"", query);
@@ -929,6 +929,7 @@ pub struct SessionFlags {
     pub all_operations: bool,
 }
 
+#[derive(Debug, Clone)]
 pub struct ConfirmationService {
     session_flags: SessionFlags,
 }
@@ -966,6 +967,7 @@ impl ConfirmationService {
     }
 }
 
+#[derive(Clone)]
 pub struct ConfirmationTool {
     confirmation_service: ConfirmationService,
 }
@@ -1058,6 +1060,7 @@ impl ConfirmationTool {
     }
 }
 
+#[derive(Clone)]
 pub struct MorphEditorTool {
     morph_api_key: String,
     morph_base_url: String,
@@ -1085,9 +1088,6 @@ impl MorphEditorTool {
         instructions: &str,
         code_edit: &str,
     ) -> Result<ToolResult, Box<dyn std::error::Error>> {
-        use tokio::fs;
-        use std::path::Path;
-
         let resolved_path = std::path::Path::new(target_file).canonicalize()?;
 
         if !resolved_path.exists() {
@@ -1109,7 +1109,7 @@ impl MorphEditorTool {
         }
 
         // Read the initial code
-        let initial_code = fs::read_to_string(&resolved_path).await?;
+        let initial_code = tokio::fs::read_to_string(&resolved_path).await?;
 
         // Check user confirmation before proceeding
         let session_flags = self.confirmation_service.get_session_flags();
@@ -1125,7 +1125,7 @@ impl MorphEditorTool {
         let merged_code = self.call_morph_apply(instructions, &initial_code, code_edit).await?;
 
         // Write the merged code back to file
-        fs::write(&resolved_path, &merged_code).await?;
+        tokio::fs::write(&resolved_path, &merged_code).await?;
 
         // Generate diff for display
         let old_lines: Vec<&str> = initial_code.lines().collect();
@@ -1142,9 +1142,9 @@ impl MorphEditorTool {
 
     async fn call_morph_apply(
         &self,
-        instructions: &str,
+        _instructions: &str,
         initial_code: &str,
-        edit_snippet: &str,
+        _edit_snippet: &str,
     ) -> Result<String, Box<dyn std::error::Error>> {
         // In a real implementation, this would make an HTTP request to the Morph API
         // Since that requires HTTP client functionality and API access, we'll provide a placeholder

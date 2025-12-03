@@ -13,6 +13,7 @@ use crossterm::{
 use std::io;
 use crate::agent::GrokAgent;
 use crate::types::{ChatEntry, ChatEntryType};
+use futures::stream::StreamExt;
 
 pub struct ChatState {
     chat_history: Vec<ChatEntry>,
@@ -84,9 +85,43 @@ pub async fn run_app(mut agent: GrokAgent, initial_message: String) -> Result<()
             is_streaming: None,
         });
 
-        match agent.process_user_message(&initial_message).await {
-            Ok(entries) => {
-                chat_state.chat_history.extend(entries);
+        // Add assistant message for streaming
+        chat_state.chat_history.push(ChatEntry {
+            entry_type: ChatEntryType::Assistant,
+            content: String::new(),
+            timestamp: chrono::Utc::now(),
+            tool_calls: None,
+            tool_call: None,
+            tool_result: None,
+            is_streaming: Some(true),
+        });
+
+        let response_idx = chat_state.chat_history.len() - 1;
+        
+        match agent.process_user_message_stream(&initial_message).await {
+            Ok(mut stream) => {
+                                
+                while let Some(chunk_result) = stream.next().await {
+                    match chunk_result {
+                        Ok(chunk) => {
+                            match chunk.chunk_type {
+                                crate::types::StreamingChunkType::Content => {
+                                    if let Some(content) = chunk.content {
+                                        chat_state.chat_history[response_idx].content.push_str(&content);
+                                    }
+                                }
+                                crate::types::StreamingChunkType::Done => {
+                                    chat_state.chat_history[response_idx].is_streaming = Some(false);
+                                    break;
+                                }
+                                _ => {}
+                            }
+                        }
+                        Err(_e) => {
+                            break;
+                        }
+                    }
+                }
             }
             Err(e) => {
                 chat_state.chat_history.push(ChatEntry {
@@ -118,6 +153,19 @@ async fn run_ui_loop(
     agent: &mut GrokAgent,
     state: &mut ChatState,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    use tokio::sync::mpsc;
+        
+    // Channel for stream updates
+    #[derive(Clone, Debug)]
+    enum StreamMessage {
+        Content(String),
+        Done,
+        Error(String),
+    }
+    
+    let (tx, mut rx) = mpsc::channel::<StreamMessage>(100);
+    let mut active_stream_task: Option<tokio::task::JoinHandle<()>> = None;
+
     loop {
         // Draw UI
         terminal.draw(|f| {
@@ -224,279 +272,288 @@ async fn run_ui_loop(
             }
         })?;
 
-        // Handle events
-        if event::poll(std::time::Duration::from_millis(250))? {
-            if let Event::Key(key) = event::read()? {
-                // Only process Press events, ignore Release and Repeat
-                if key.kind == KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' => {
-                            return Ok(());
-                        },
-                        KeyCode::Char(c) => {
-                            state.input.push(c);
-                            
-                            // Check for @ mentions
-                            if let Some(at_pos) = state.input.rfind('@') {
-                                let after_at = &state.input[at_pos..];
-                                if !after_at.contains(' ') {
-                                    // We're in a mention
-                                    state.show_mention_hints = true;
-                                    let mention_lower = after_at.to_lowercase();
-                                    state.mention_hints = AVAILABLE_MENTIONS
-                                        .iter()
-                                        .filter(|mention| {
-                                            let mention_name = mention.split(" - ").next().unwrap_or("");
-                                            mention_name.to_lowercase().starts_with(&mention_lower)
-                                        })
-                                        .map(|s| s.to_string())
-                                        .collect();
-                                    state.selected_mention_hint = 0;
-                                    state.show_command_hints = false;
+        // Handle events and streams concurrently using tokio::select!
+        tokio::select! {
+            // Check for keyboard events (non-blocking with 250ms timeout)
+            event_result = async {
+                if event::poll(std::time::Duration::from_millis(250))? {
+                    event::read()
+                } else {
+                    Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "timeout"))
+                }
+            } => {
+                if let Ok(Event::Key(key)) = event_result {
+                    // Only process Press events, ignore Release and Repeat
+                    if key.kind == KeyEventKind::Press {
+                        match key.code {
+                            KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' => {
+                                return Ok(());
+                            },
+                            KeyCode::Char(c) => {
+                                state.input.push(c);
+                                
+                                // Check for @ mentions
+                                if let Some(at_pos) = state.input.rfind('@') {
+                                    let after_at = &state.input[at_pos..];
+                                    if !after_at.contains(' ') {
+                                        // We're in a mention
+                                        state.show_mention_hints = true;
+                                        let mention_lower = after_at.to_lowercase();
+                                        state.mention_hints = AVAILABLE_MENTIONS
+                                            .iter()
+                                            .filter(|mention| {
+                                                let mention_name = mention.split(" - ").next().unwrap_or("");
+                                                mention_name.to_lowercase().starts_with(&mention_lower)
+                                            })
+                                            .map(|s| s.to_string())
+                                            .collect();
+                                        state.selected_mention_hint = 0;
+                                        state.show_command_hints = false;
+                                    } else {
+                                        state.show_mention_hints = false;
+                                        state.mention_hints.clear();
+                                    }
                                 } else {
                                     state.show_mention_hints = false;
                                     state.mention_hints.clear();
                                 }
-                            } else {
-                                state.show_mention_hints = false;
-                                state.mention_hints.clear();
-                            }
-                            
-                            // Update command hints when user types '/'
-                            if state.input.starts_with('/') && !state.show_mention_hints {
-                                state.show_command_hints = true;
-                                let input_lower = state.input.to_lowercase();
-                                state.command_hints = AVAILABLE_COMMANDS
-                                    .iter()
-                                    .filter(|cmd| {
-                                        // Extract command name (before the dash)
-                                        let cmd_name = cmd.split(" - ").next().unwrap_or("");
-                                        cmd_name.to_lowercase().starts_with(&input_lower)
-                                    })
-                                    .map(|s| s.to_string())
-                                    .collect();
-                                state.selected_hint = 0;
-                            } else if !state.show_mention_hints {
-                                state.show_command_hints = false;
-                                state.command_hints.clear();
-                            }
-                        },
-                        KeyCode::Backspace => {
-                            state.input.pop();
-                            
-                            // Update command hints after backspace
-                            if state.input.starts_with('/') {
-                                state.show_command_hints = true;
-                                let input_lower = state.input.to_lowercase();
-                                state.command_hints = AVAILABLE_COMMANDS
-                                    .iter()
-                                    .filter(|cmd| {
-                                        // Extract command name (before the dash)
-                                        let cmd_name = cmd.split(" - ").next().unwrap_or("");
-                                        cmd_name.to_lowercase().starts_with(&input_lower)
-                                    })
-                                    .map(|s| s.to_string())
-                                    .collect();
-                                state.selected_hint = 0;
-                            } else {
-                                state.show_command_hints = false;
-                                state.command_hints.clear();
-                            }
-                        },
-                        KeyCode::Up => {
-                            // Navigate up in mention hints
-                            if state.show_mention_hints && !state.mention_hints.is_empty() {
-                                if state.selected_mention_hint > 0 {
-                                    state.selected_mention_hint -= 1;
-                                }
-                            }
-                            // Navigate up in command hints
-                            else if state.show_command_hints && !state.command_hints.is_empty() {
-                                if state.selected_hint > 0 {
-                                    state.selected_hint -= 1;
-                                }
-                            }
-                        },
-                        KeyCode::Down => {
-                            // Navigate down in mention hints
-                            if state.show_mention_hints && !state.mention_hints.is_empty() {
-                                if state.selected_mention_hint < state.mention_hints.len() - 1 {
-                                    state.selected_mention_hint += 1;
-                                }
-                            }
-                            // Navigate down in command hints
-                            else if state.show_command_hints && !state.command_hints.is_empty() {
-                                if state.selected_hint < state.command_hints.len() - 1 {
-                                    state.selected_hint += 1;
-                                }
-                            }
-                        },
-                        KeyCode::Tab => {
-                            // Auto-complete selected mention
-                            if state.show_mention_hints && !state.mention_hints.is_empty() {
-                                let selected = &state.mention_hints[state.selected_mention_hint];
-                                let mention = selected.split_whitespace().next().unwrap_or("");
-                                // Replace from the last @ to the end
-                                if let Some(at_pos) = state.input.rfind('@') {
-                                    state.input.truncate(at_pos);
-                                    state.input.push_str(mention);
-                                    state.input.push(' ');
-                                }
-                                state.show_mention_hints = false;
-                                state.mention_hints.clear();
-                            }
-                            // Auto-complete selected command
-                            else if state.show_command_hints && !state.command_hints.is_empty() {
-                                let selected = &state.command_hints[state.selected_hint];
-                                let cmd = selected.split_whitespace().next().unwrap_or("");
-                                state.input = cmd.to_string();
-                                state.show_command_hints = false;
-                                state.command_hints.clear();
-                            }
-                        },
-                        KeyCode::Enter => {
-                            if !state.input.trim().is_empty() {
-                                let user_input = state.input.clone();
-                                state.show_command_hints = false;
-                                state.command_hints.clear();
-                                state.show_mention_hints = false;
-                                state.mention_hints.clear();
                                 
-                                // Check if input is a command
-                                if user_input.starts_with('/') {
-                                    let cmd_response = match user_input.trim() {
-                                        "/help" => {
-                                            "Available commands:\n\
-                                            /help - Show this help message\n\
-                                            /clear - Clear chat history\n\
-                                            /status - Show application status\n\
-                                            /model - Show current model\n\
-                                            /exit - Exit the application".to_string()
-                                        },
-                                        "/clear" => {
-                                            state.chat_history.clear();
-                                            "Chat history cleared.".to_string()
-                                        },
-                                        "/status" => {
-                                            "Status: Running\n\
-                                            Model: Grok\n\
-                                            Ready for input.".to_string()
-                                        },
-                                        "/model" => {
-                                            "Current model: grok-2\n\
-                                            Available models: grok-2, grok-vision".to_string()
-                                        },
-                                        "/exit" => {
-                                            return Ok(());
-                                        },
-                                        _ => format!("Unknown command: {}. Type /help for available commands.", user_input),
-                                    };
-                                    
-                                    state.chat_history.push(ChatEntry {
-                                        entry_type: ChatEntryType::Assistant,
-                                        content: cmd_response,
-                                        timestamp: chrono::Utc::now(),
-                                        tool_calls: None,
-                                        tool_call: None,
-                                        tool_result: None,
-                                        is_streaming: None,
-                                    });
+                                // Update command hints when user types '/'
+                                if state.input.starts_with('/') && !state.show_mention_hints {
+                                    state.show_command_hints = true;
+                                    let input_lower = state.input.to_lowercase();
+                                    state.command_hints = AVAILABLE_COMMANDS
+                                        .iter()
+                                        .filter(|cmd| {
+                                            // Extract command name (before the dash)
+                                            let cmd_name = cmd.split(" - ").next().unwrap_or("");
+                                            cmd_name.to_lowercase().starts_with(&input_lower)
+                                        })
+                                        .map(|s| s.to_string())
+                                        .collect();
+                                    state.selected_hint = 0;
+                                } else if !state.show_mention_hints {
+                                    state.show_command_hints = false;
+                                    state.command_hints.clear();
+                                }
+                            },
+                            KeyCode::Backspace => {
+                                state.input.pop();
+                                
+                                // Update command hints after backspace
+                                if state.input.starts_with('/') {
+                                    state.show_command_hints = true;
+                                    let input_lower = state.input.to_lowercase();
+                                    state.command_hints = AVAILABLE_COMMANDS
+                                        .iter()
+                                        .filter(|cmd| {
+                                            // Extract command name (before the dash)
+                                            let cmd_name = cmd.split(" - ").next().unwrap_or("");
+                                            cmd_name.to_lowercase().starts_with(&input_lower)
+                                        })
+                                        .map(|s| s.to_string())
+                                        .collect();
+                                    state.selected_hint = 0;
                                 } else {
-                                    // Add user message to chat immediately
-                                    state.chat_history.push(ChatEntry {
-                                        entry_type: ChatEntryType::User,
-                                        content: user_input.clone(),
-                                        timestamp: chrono::Utc::now(),
-                                        tool_calls: None,
-                                        tool_call: None,
-                                        tool_result: None,
-                                        is_streaming: None,
-                                    });
-
-                                    // Add a temporary "thinking" message with streaming flag
-                                    let thinking_idx = state.chat_history.len();
-                                    state.chat_history.push(ChatEntry {
-                                        entry_type: ChatEntryType::Assistant,
-                                        content: "⏳ 正在思考...".to_string(),
-                                        timestamp: chrono::Utc::now(),
-                                        tool_calls: None,
-                                        tool_call: None,
-                                        tool_result: None,
-                                        is_streaming: Some(true),
-                                    });
-
-                                    // Process with agent with timeout
-                                    let agent_response = tokio::time::timeout(
-                                        std::time::Duration::from_secs(30),
-                                        agent.process_user_message(&user_input)
-                                    ).await;
-                                    
-                                    let agent_response = match agent_response {
-                                        Ok(resp) => resp,
-                                        Err(_) => {
-                                            Err(Box::new(std::io::Error::new(
-                                                std::io::ErrorKind::TimedOut,
-                                                "LLM call timed out after 30 seconds"
-                                            )) as Box<dyn std::error::Error>)
-                                        }
-                                    };
-
-                                    // Replace the "thinking" message with actual response
-                                    match agent_response {
-                                        Ok(entries) => {
-                                            // Filter out empty entries and combine consecutive assistant messages
-                                            let mut combined_content = String::new();
-                                            
-                                            for entry in entries {
-                                                // Skip user messages (already added above) and empty content entries
-                                                if entry.entry_type == ChatEntryType::User || entry.content.trim().is_empty() {
-                                                    continue;
-                                                }
-                                                
-                                                // Combine assistant messages
-                                                if entry.entry_type == ChatEntryType::Assistant {
-                                                    if !combined_content.is_empty() {
-                                                        combined_content.push('\n');
-                                                    }
-                                                    combined_content.push_str(&entry.content);
-                                                }
-                                            }
-                                            
-                                            // Replace the "thinking" message with actual response
-                                            if !combined_content.is_empty() && thinking_idx < state.chat_history.len() {
-                                                state.chat_history[thinking_idx] = ChatEntry {
-                                                    entry_type: ChatEntryType::Assistant,
-                                                    content: combined_content,
-                                                    timestamp: chrono::Utc::now(),
-                                                    tool_calls: None,
-                                                    tool_call: None,
-                                                    tool_result: None,
-                                                    is_streaming: Some(false),
-                                                };
-                                            } else if combined_content.is_empty() {
-                                                // If no content, remove the thinking message
-                                                state.chat_history.pop();
-                                            }
-                                        }
-                                        Err(e) => {
-                                            state.chat_history.push(ChatEntry {
-                                                entry_type: ChatEntryType::Assistant,
-                                                content: format!("Error: {}", e),
-                                                timestamp: chrono::Utc::now(),
-                                                tool_calls: None,
-                                                tool_call: None,
-                                                tool_result: None,
-                                                is_streaming: None,
-                                            });
-                                        }
+                                    state.show_command_hints = false;
+                                    state.command_hints.clear();
+                                }
+                            },
+                            KeyCode::Up => {
+                                // Navigate up in mention hints
+                                if state.show_mention_hints && !state.mention_hints.is_empty() {
+                                    if state.selected_mention_hint > 0 {
+                                        state.selected_mention_hint -= 1;
                                     }
                                 }
-                                
-                                state.input.clear();
+                                // Navigate up in command hints
+                                else if state.show_command_hints && !state.command_hints.is_empty() {
+                                    if state.selected_hint > 0 {
+                                        state.selected_hint -= 1;
+                                    }
+                                }
+                            },
+                            KeyCode::Down => {
+                                // Navigate down in mention hints
+                                if state.show_mention_hints && !state.mention_hints.is_empty() {
+                                    if state.selected_mention_hint < state.mention_hints.len() - 1 {
+                                        state.selected_mention_hint += 1;
+                                    }
+                                }
+                                // Navigate down in command hints
+                                else if state.show_command_hints && !state.command_hints.is_empty() {
+                                    if state.selected_hint < state.command_hints.len() - 1 {
+                                        state.selected_hint += 1;
+                                    }
+                                }
+                            },
+                            KeyCode::Tab => {
+                                // Auto-complete selected mention
+                                if state.show_mention_hints && !state.mention_hints.is_empty() {
+                                    let selected = &state.mention_hints[state.selected_mention_hint];
+                                    let mention = selected.split_whitespace().next().unwrap_or("");
+                                    // Replace from the last @ to the end
+                                    if let Some(at_pos) = state.input.rfind('@') {
+                                        state.input.truncate(at_pos);
+                                        state.input.push_str(mention);
+                                        state.input.push(' ');
+                                    }
+                                    state.show_mention_hints = false;
+                                    state.mention_hints.clear();
+                                }
+                                // Auto-complete selected command
+                                else if state.show_command_hints && !state.command_hints.is_empty() {
+                                    let selected = &state.command_hints[state.selected_hint];
+                                    let cmd = selected.split_whitespace().next().unwrap_or("");
+                                    state.input = cmd.to_string();
+                                    state.show_command_hints = false;
+                                    state.command_hints.clear();
+                                }
+                            },
+                            KeyCode::Enter => {
+                                if !state.input.trim().is_empty() {
+                                    let user_input = state.input.clone();
+                                    state.show_command_hints = false;
+                                    state.command_hints.clear();
+                                    state.show_mention_hints = false;
+                                    state.mention_hints.clear();
+                                    
+                                    // Check if input is a command
+                                    if user_input.starts_with('/') {
+                                        let cmd_response = match user_input.trim() {
+                                            "/help" => {
+                                                "Available commands:\n\
+                                                /help - Show this help message\n\
+                                                /clear - Clear chat history\n\
+                                                /status - Show application status\n\
+                                                /model - Show current model\n\
+                                                /exit - Exit the application".to_string()
+                                            },
+                                            "/clear" => {
+                                                state.chat_history.clear();
+                                                "Chat history cleared.".to_string()
+                                            },
+                                            "/status" => {
+                                                "Status: Running\n\
+                                                Model: Grok\n\
+                                                Ready for input.".to_string()
+                                            },
+                                            "/model" => {
+                                                "Current model: grok-2\n\
+                                                Available models: grok-2, grok-vision".to_string()
+                                            },
+                                            "/exit" => {
+                                                return Ok(());
+                                            },
+                                            _ => format!("Unknown command: {}. Type /help for available commands.", user_input),
+                                        };
+                                        
+                                        state.chat_history.push(ChatEntry {
+                                            entry_type: ChatEntryType::Assistant,
+                                            content: cmd_response,
+                                            timestamp: chrono::Utc::now(),
+                                            tool_calls: None,
+                                            tool_call: None,
+                                            tool_result: None,
+                                            is_streaming: None,
+                                        });
+                                    } else {
+                                        // Add user message to chat immediately
+                                        state.chat_history.push(ChatEntry {
+                                            entry_type: ChatEntryType::User,
+                                            content: user_input.clone(),
+                                            timestamp: chrono::Utc::now(),
+                                            tool_calls: None,
+                                            tool_call: None,
+                                            tool_result: None,
+                                            is_streaming: None,
+                                        });
+
+                                        // Add a temporary assistant message for streaming
+                                        let response_idx = state.chat_history.len();
+                                        state.chat_history.push(ChatEntry {
+                                            entry_type: ChatEntryType::Assistant,
+                                            content: String::new(),
+                                            timestamp: chrono::Utc::now(),
+                                            tool_calls: None,
+                                            tool_call: None,
+                                            tool_result: None,
+                                            is_streaming: Some(true),
+                                        });
+
+                                        // Spawn background task for streaming
+                                        let user_msg = user_input.clone();
+                                        let mut agent_clone = (*agent).clone();
+                                        let tx_clone = tx.clone();
+                                        
+                                        let task = tokio::spawn(async move {
+                                                                                        
+                                            match agent_clone.process_user_message_stream(&user_msg).await {
+                                                Ok(mut stream) => {
+                                                    while let Some(chunk_result) = stream.next().await {
+                                                        match chunk_result {
+                                                            Ok(chunk) => {
+                                                                match chunk.chunk_type {
+                                                                    crate::types::StreamingChunkType::Content => {
+                                                                        if let Some(content) = chunk.content {
+                                                                            let _ = tx_clone.send(StreamMessage::Content(content)).await;
+                                                                        }
+                                                                    }
+                                                                    crate::types::StreamingChunkType::Done => {
+                                                                        let _ = tx_clone.send(StreamMessage::Done).await;
+                                                                        break;
+                                                                    }
+                                                                    _ => {}
+                                                                }
+                                                            }
+                                                            Err(e) => {
+                                                                let _ = tx_clone.send(StreamMessage::Error(e.to_string())).await;
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    let _ = tx_clone.send(StreamMessage::Error(e.to_string())).await;
+                                                }
+                                            }
+                                        });
+                                        
+                                        active_stream_task = Some(task);
+                                    }
+                                    
+                                    state.input.clear();
+                                }
+                            },
+                            KeyCode::Esc => return Ok(()),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            // Handle stream updates from background task
+            Some(update) = rx.recv() => {
+                // Find the last assistant message and append to it
+                if let Some(response_idx) = state.chat_history.iter().rposition(|e| matches!(e.entry_type, ChatEntryType::Assistant)) {
+                    match update {
+                        StreamMessage::Content(content) => {
+                            if response_idx < state.chat_history.len() {
+                                state.chat_history[response_idx].content.push_str(&content);
                             }
-                        },
-                        KeyCode::Esc => return Ok(()),
-                        _ => {}
+                        }
+                        StreamMessage::Done => {
+                            if response_idx < state.chat_history.len() {
+                                state.chat_history[response_idx].is_streaming = Some(false);
+                            }
+                            active_stream_task = None;
+                        }
+                        StreamMessage::Error(error) => {
+                            if response_idx < state.chat_history.len() {
+                                state.chat_history[response_idx].content.push_str(&format!("\n[Error: {}]", error));
+                                state.chat_history[response_idx].is_streaming = Some(false);
+                            }
+                            active_stream_task = None;
+                        }
                     }
                 }
             }

@@ -131,7 +131,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Interactive mode: launch UI
         println!("🤖 Starting Grok CLI Conversational Assistant...\n");
 
-        let mut agent = agent::GrokAgent::new(&api_key, base_url, model, Some(args.max_tool_rounds), is_openai_compatible).await?;
+        let agent = agent::GrokAgent::new(&api_key, base_url, model, Some(args.max_tool_rounds), is_openai_compatible).await?;
         let initial_message = args.message.join(" ");
 
         ui::run_app(agent, initial_message).await?;
@@ -142,7 +142,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn handle_mcp_command(command: crate::commands::mcp::McpCommand) -> Result<(), Box<dyn std::error::Error>> {
     use crate::commands::mcp::{MCPServerConfig, TransportConfig};
-    use std::collections::HashMap;
 
     match command {
         crate::commands::mcp::McpCommand::Add { name, transport, command, args } => {

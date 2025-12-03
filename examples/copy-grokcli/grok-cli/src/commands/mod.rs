@@ -71,7 +71,7 @@ mod mcp_functions {
         pub mcp_servers: Option<HashMap<String, MCPServerConfig>>,
     }
 
-    pub fn add_mcp_server(name: String, config: MCPServerConfig) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn add_mcp_server(name: String, _config: MCPServerConfig) -> Result<(), Box<dyn std::error::Error>> {
         // In a complete implementation, this would save the server config to project settings
         println!("Added MCP server: {}", name);
         Ok(())
