@@ -27,6 +27,22 @@ impl GrokAgent {
         max_tool_rounds: Option<u32>,
         is_openai_compatible: Option<bool>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        // Adaptive tool rounds configuration (inspired by LangGraph and industry best practices)
+        // Priority: explicit parameter > environment variable > model-based default > global default
+        let tool_rounds = max_tool_rounds
+            .or_else(|| std::env::var("GROK_MAX_TOOL_ROUNDS").ok().and_then(|v| v.parse().ok()))
+            .or_else(|| {
+                // Model-based defaults: complex models get more rounds
+                let model_name = model.as_deref().unwrap_or("grok-code-fast-1");
+                match model_name {
+                    m if m.contains("claude") => Some(15),      // Claude: more reasoning
+                    m if m.contains("gpt-4") => Some(12),       // GPT-4: good balance
+                    m if m.contains("grok") => Some(10),        // Grok: efficient
+                    m if m.contains("qwen") => Some(8),         // Qwen: lightweight
+                    _ => Some(5),                                // Unknown: conservative
+                }
+            })
+            .unwrap_or(5);
         let client = GrokClient::new(api_key, model, Some(base_url), is_openai_compatible);
         let text_editor = TextEditorTool::new();
         let bash = BashTool::new();
@@ -114,7 +130,7 @@ Current working directory: ".to_string() + &std::env::current_dir()?.to_string_l
             morph_editor,
             chat_history: Vec::new(),
             messages: vec![system_message],
-            max_tool_rounds: max_tool_rounds.unwrap_or(400),
+            max_tool_rounds: tool_rounds,
         })
     }
 
@@ -139,6 +155,8 @@ Current working directory: ".to_string() + &std::env::current_dir()?.to_string_l
 
         let mut new_entries = vec![user_entry.clone()];
         let mut tool_rounds = 0;
+        let mut last_tool_signature: String = String::new();  // Track tool name + arguments for loop detection
+        let mut repeated_calls = 0;  // Count repeated identical tool calls
 
         // Get all available tools
         let tools = self.get_all_tools().await;
@@ -176,9 +194,72 @@ Current working directory: ".to_string() + &std::env::current_dir()?.to_string_l
                 None => break,
             };
 
-            // Check if there are tool calls
+            // Check if there are tool calls (must be non-empty)
             if let Some(tool_calls) = &assistant_message.tool_calls {
+                if tool_calls.is_empty() {
+                    // Empty tool_calls array - treat as no tool calls
+                    let final_entry = ChatEntry {
+                        entry_type: ChatEntryType::Assistant,
+                        content: assistant_message.content.clone().unwrap_or_else(|| "I understand, but I don't have a specific response.".to_string()),
+                        timestamp: chrono::Utc::now(),
+                        tool_calls: None,
+                        tool_call: None,
+                        tool_result: None,
+                        is_streaming: None,
+                    };
+                    self.chat_history.push(final_entry.clone());
+                    new_entries.push(final_entry);
+
+                    self.messages.push(GrokMessage {
+                        role: "assistant".to_string(),
+                        content: assistant_message.content.clone(),
+                        tool_calls: None,
+                        tool_call_id: None,
+                    });
+                    break; // Exit the loop
+                }
+                
                 tool_rounds += 1;
+
+                // Loop detection: check if same tools with same arguments are being called repeatedly
+                // Create a signature of tool name + arguments for comparison
+                let current_signature = tool_calls
+                    .iter()
+                    .map(|tc| format!("{}({})", tc.function.name, tc.function.arguments))
+                    .collect::<Vec<_>>()
+                    .join(";");
+                
+                if current_signature == last_tool_signature && !current_signature.is_empty() {
+                    repeated_calls += 1;
+                    if repeated_calls >= 2 {
+                        // Same tool call with same arguments 3 times in a row - infinite loop
+                        let tool_desc = if current_signature.is_empty() {
+                            "unknown tool".to_string()
+                        } else {
+                            current_signature.clone()
+                        };
+                        
+                        let warning_entry = ChatEntry {
+                            entry_type: ChatEntryType::Assistant,
+                            content: format!(
+                                "⚠️ Infinite loop detected: {} called {} times with identical parameters. This suggests the tool is not making progress. Stopping to prevent infinite loops.",
+                                tool_desc,
+                                repeated_calls + 1
+                            ),
+                            timestamp: chrono::Utc::now(),
+                            tool_calls: None,
+                            tool_call: None,
+                            tool_result: None,
+                            is_streaming: None,
+                        };
+                        self.chat_history.push(warning_entry.clone());
+                        new_entries.push(warning_entry);
+                        break;
+                    }
+                } else {
+                    repeated_calls = 0;
+                    last_tool_signature = current_signature;
+                }
 
                 // Add assistant message with tool calls
                 let assistant_entry = ChatEntry {
